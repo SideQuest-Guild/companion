@@ -101,10 +101,6 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: ${{ matrix.target }}
-
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
@@ -146,10 +142,6 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: macos-universal
 
       - name: Build (aarch64)
         run: cargo build --release --locked --target aarch64-apple-darwin
@@ -202,10 +194,6 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-unknown-linux-gnu
-
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          key: linux-x86_64
 
       - name: Build
         run: cargo build --release --locked --target x86_64-unknown-linux-gnu
