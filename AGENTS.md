@@ -22,11 +22,30 @@ members; keep it current and in plain words.
 
 - `make install`, then `make ci` (fmt check, clippy with `-D warnings`, tests, `cargo deny check`). Commit and push
   only when `make ci` exits 0.
-- Commits are SSH-signed via 1Password. If signing fails, stop and report it; never disable signing.
-- Conventional-commit subjects, written as plain-English sentences.
+- Commits are SSH-signed via 1Password. If signing fails, ask the user to unlock it; never turn signing off.
+- Commit subjects are Conventional Commits written as plain sentences. They become the changelog members read, so
+  say what changed for them.
 - Building on Linux needs GPUI's system libraries first (see the `Install Linux build dependencies` step in
   `.github/workflows/ci.yml`); building on macOS needs full Xcode, not just the Command Line Tools, since GPUI
   compiles Metal shaders at build time.
+
+## Releases
+Each release adds a section to `CHANGELOG.md`, which GitHub and the docs site show, and members' companions update
+to it. Without a tag, every change sits under "Unreleased".
+- Cut one when a batch of `feat` or `fix` commits is ready for members.
+- Version `v0.MINOR.PATCH`: any `feat` since the last tag bumps MINOR; only fixes bump PATCH. Set the same version in
+  `Cargo.toml` first, or the release workflow stops.
+
+```sh
+git cliff --tag v0.2.0 -o CHANGELOG.md
+git add CHANGELOG.md Cargo.toml Cargo.lock && git commit -m "docs: changelog for v0.2.0"
+git tag -s v0.2.0 -m "SideQuest Companion v0.2.0"
+git push origin main v0.2.0
+gh workflow run build.yml -R SideQuest-Guild/docs   # show it on the docs site now, not at tomorrow's build
+```
+
+`v*` tags can't be moved or deleted, and a published release can't change; fix a bad release with a new version.
+The first release also needs `"shipped": true` for the companion in the docs repo's `repos.json`.
 
 ## The engine-UI contract
 
