@@ -46,7 +46,7 @@ open = "5"
 gpui-kit = "0.8.1"
 gpui-tray = { version = "0.3", default-features = false, features = ["gpui-kit", "menu-state"] }
 rust-embed = { version = "8.7", features = ["include-exclude"] }
-png = "0.17"
+png = "0.18"
 notify-rust = "4"
 auto-launch = "0.6"
 

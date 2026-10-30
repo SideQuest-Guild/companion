@@ -262,7 +262,7 @@ fn composite_dot(mut rgba: Vec<u8>, w: u32, h: u32, dot: Option<([u8; 3], u8, f3
 /// Decodes a PNG into (RGBA8 pixels, width, height), or `None` (logging the reason) if the bytes
 /// aren't a valid PNG.
 fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let decoder = png::Decoder::new(bytes);
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = match decoder.read_info() {
         Ok(reader) => reader,
         Err(err) => {
@@ -271,7 +271,11 @@ fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
         }
     };
     let (w, h) = (reader.info().width, reader.info().height);
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let Some(size) = reader.output_buffer_size() else {
+        tracing::error!(w, h, "tray: embedded tray icon PNG is too large to decode");
+        return None;
+    };
+    let mut buf = vec![0; size];
     let info = match reader.next_frame(&mut buf) {
         Ok(info) => info,
         Err(err) => {
