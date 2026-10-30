@@ -23,6 +23,8 @@ trim = true
 conventional_commits = true
 filter_unconventional = true
 commit_parsers = [
+  # 970be88 is typed `fix` but only changed CI; members never saw it.
+  { sha = "970be884faab86b7e1a10f802963e71475f4e662", skip = true },
   { message = "^feat", group = "<!-- 0 -->New" },
   { message = "^fix", group = "<!-- 1 -->Fixed" },
   { message = "^perf", group = "<!-- 2 -->Faster" },

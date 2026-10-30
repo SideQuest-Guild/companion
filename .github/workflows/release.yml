@@ -256,6 +256,32 @@ jobs:
         env:
           OUTPUT: CHANGELOG.md
 
+      # The GitHub release adds a short guide to the changelog section: which file to get and how to check it.
+      # CHANGELOG.md itself stays the changelog alone.
+      - name: Add the download guide
+        run: |
+          cp CHANGELOG.md RELEASE_NOTES.md
+          cat >> RELEASE_NOTES.md <<EOF
+
+          ### Which file?
+
+          - **Windows:** \`sidequest-companion-$VERSION-windows-x86_64.zip\` (\`-aarch64\` for Arm PCs). Unzip and run \`sidequest-companion.exe\`.
+          - **macOS:** \`sidequest-companion-$VERSION-macos-universal.zip\`, for Apple silicon and Intel. Unzip and move **SideQuest Companion** to Applications.
+          - **Linux:** \`sidequest-companion-$VERSION-linux-x86_64.tar.gz\`.
+
+          The app isn't signed with a paid certificate, so Windows SmartScreen and macOS Gatekeeper warn the first time. The [README](https://github.com/SideQuest-Guild/companion#install) says how to open it anyway.
+
+          ### Check your download
+
+          Every file here was built by this repo's release workflow from a signed tag. To check one, install the [GitHub CLI](https://cli.github.com/) and run:
+
+          \`\`\`sh
+          gh attestation verify sidequest-companion-$VERSION-linux-x86_64.tar.gz --repo SideQuest-Guild/companion
+          \`\`\`
+
+          \`SHA256SUMS.txt\` lists every file's checksum, and the \`.spdx.json\` SBOM lists everything the app is built from.
+          EOF
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: asset-*
@@ -300,6 +326,7 @@ jobs:
           path: |
             dist/*
             CHANGELOG.md
+            RELEASE_NOTES.md
           if-no-files-found: error
 
   github-release:
@@ -325,9 +352,9 @@ jobs:
           shopt -s nullglob
           assets=(dist/*.zip dist/*.tar.gz dist/*.spdx.json dist/SHA256SUMS.txt)
           if [ -n "$TAG" ]; then
-            gh release create "$TAG" --draft --verify-tag --title "SideQuest Companion $TAG" --notes-file CHANGELOG.md "${assets[@]}"
+            gh release create "$TAG" --draft --verify-tag --title "SideQuest Companion $TAG" --notes-file RELEASE_NOTES.md "${assets[@]}"
             gh release edit "$TAG" --draft=false
           else
             gh release create "dry-run-$GITHUB_RUN_ID" --draft --target "$GITHUB_SHA" --title "Dry run $GITHUB_RUN_ID" \
-              --notes-file CHANGELOG.md "${assets[@]}"
+              --notes-file RELEASE_NOTES.md "${assets[@]}"
           fi
