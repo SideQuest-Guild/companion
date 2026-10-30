@@ -10,7 +10,7 @@ just a window that draws itself.
 
 ## Install
 
-Download the file for your system from [Releases](https://github.com/SideQuest-Guild/companion/releases):
+Download the file for your system from the [latest release](https://github.com/SideQuest-Guild/companion/releases/latest):
 
 | System | File |
 |---|---|
@@ -25,7 +25,7 @@ the app and choose **Open**, or run `xattr -d com.apple.quarantine "SideQuest Co
 normally from then on.
 
 **Windows:** unzip and run `sidequest-companion.exe`. SmartScreen will warn about an unrecognized app the first time;
-click **More info**, then **Run anyway**. This isn't a sign the file is unsafe -- see
+click **More info**, then **Run anyway**. This isn't a sign the file is unsafe. See
 [Verifying a download](#verifying-a-download) to check it yourself.
 
 **Linux:** untar anywhere, then run `sidequest-companion`. The tarball also has a `.desktop` file and an icon if you
@@ -35,34 +35,45 @@ at where you put the binary.
 
 ## Set up
 
-1. In game, as an officer, open the Console's **Sync** tab and get a sync token (or visit
-   [sidequest-guild.com/officers/sync/](https://sidequest-guild.com/officers/sync/) directly). The site shows it
-   once.
-2. Open the companion and paste the token into **Settings**. It goes straight into your OS keyring, never into a
-   plain settings file.
-3. The companion finds your WoW installation on its own; if it guesses wrong, set the path in **Settings**.
+1. Open the companion and choose **Sign in with sidequest-guild.com**. Your browser opens the site's sign-in page
+   with a short code; check it matches the code in the app and click **Authorize**. You need to be signed in to the
+   site as a guild member. The app shows nothing else until you sign in, so people outside the guild see nothing.
+2. That's it. The companion keeps its sign-in in your OS keyring, never in a plain settings file, and finds your WoW
+   installation on its own. If it guesses wrong, set the path in **Settings**.
+
+Sites that are too old for browser sign-in still work: open **Use a token instead** in **Settings** and paste a sync
+token from [sidequest-guild.com/officers/sync/](https://sidequest-guild.com/officers/sync/).
+
+To sign out, use **Sign out** in **Settings**, or revoke the companion on your
+[account page](https://sidequest-guild.com/account/). Either one cancels its sign-in on the site.
 
 ## What it does
 
-- **Auto-sync:** whenever the addon writes a new `SQX1:` export to `SideQuest.lua` (on logout or `/reload`), the
-  companion uploads it within a few seconds and shows the result -- new sessions, encounters, loot, awards -- in its
-  **History** tab.
-- **Import staging:** after a successful upload, the companion asks the site for the matching `SQI1:` game import and
-  writes it into `SideQuest.lua` as a staged inbox entry, but **only while WoW is closed**. The addon applies it
-  automatically the next time an officer logs in, then clears it. You never have to copy-paste an import string by
-  hand.
+Every member gets:
+
 - **Addon updates:** the companion checks the addon's GitHub releases against the version installed in your
-  `AddOns` folder and offers to install the latest one -- the same signed zip CurseForge serves.
-- **Self-update:** the companion updates itself the same way, checked against its own releases.
-- **Raid reminders:** a notification before raids you're signed up for (or every public raid, your choice), pulled
-  from your private calendar feed or the site's public events.
+  `AddOns` folder and installs the latest one in a click, the same zip CurseForge serves, checked against the
+  release's `SHA256SUMS.txt` first. It can also update the addon on its own whenever WoW is closed.
+- **Raid reminders:** a notification before raids you're signed up for (or every raid, your choice), from your own
+  calendar on the site.
+- **App updates:** the companion checks its own releases twice a day, tells you when a new version is out, and
+  installs it in a click after checking it the same way.
+
+Officers also get:
+
+- **Auto-sync:** whenever the addon writes a new `SQX1:` export to `SideQuest.lua` (on logout or `/reload`), the
+  companion uploads it within a few seconds and shows the result (new sessions, encounters, loot, awards) in its
+  **History** tab.
+- **Import staging:** after an upload, the companion asks the site for the matching `SQI1:` game import and writes it
+  into `SideQuest.lua` as a staged inbox entry, but **only while WoW is closed**. The addon applies it the next time
+  an officer logs in, then clears it. Nobody has to copy and paste an import string by hand.
 
 ## Settings and logs
 
 | What | macOS | Windows | Linux |
 |---|---|---|---|
-| Settings | `~/Library/Application Support/com.sidequest-guild.companion/` | `%APPDATA%\SideQuest Guild\Companion\` | `~/.config/sidequest-companion/` |
-| Logs | `~/Library/Logs/com.sidequest-guild.companion/` | `%LOCALAPPDATA%\SideQuest Guild\Companion\logs\` | `~/.local/state/sidequest-companion/logs/` |
+| Settings | `~/Library/Application Support/com.SideQuest-Guild.SideQuest-Companion/` | `%APPDATA%\SideQuest Guild\SideQuest Companion\config\` | `~/.config/sidequestcompanion/` |
+| Logs | `~/Library/Application Support/com.SideQuest-Guild.SideQuest-Companion/logs/` | `%APPDATA%\SideQuest Guild\SideQuest Companion\data\logs\` | `~/.local/share/sidequestcompanion/logs/` |
 
 Logs never contain your sync token, calendar URL, or raw addon export data.
 
@@ -72,13 +83,19 @@ Every release asset is built by GitHub Actions from a signed tag and attested wi
 [GitHub CLI](https://cli.github.com/) installed:
 
 ```sh
-gh attestation verify sidequest-companion-0.2.0-macos-universal.zip --repo SideQuest-Guild/companion
+gh attestation verify sidequest-companion-0.1.0-macos-universal.zip --repo SideQuest-Guild/companion
+```
+
+To check that a file is the one published in that release, which can't be changed after it's published:
+
+```sh
+gh release verify-asset v0.1.0 sidequest-companion-0.1.0-macos-universal.zip --repo SideQuest-Guild/companion
 ```
 
 Or check it against the published checksums:
 
 ```sh
-sha256sum -c SHA256SUMS.txt
+sha256sum --ignore-missing -c SHA256SUMS.txt
 ```
 
 See [SECURITY.md](SECURITY.md) for what else is in scope and how to report a problem privately.

@@ -29,7 +29,13 @@ published. To check that an asset you downloaded came from this repo's release w
 [GitHub CLI](https://cli.github.com/) and run:
 
 ```sh
-gh attestation verify sidequest-companion-0.2.0-linux-x86_64.tar.gz --repo SideQuest-Guild/companion
+gh attestation verify sidequest-companion-0.1.0-linux-x86_64.tar.gz --repo SideQuest-Guild/companion
+```
+
+To check a file against the GitHub release it came from:
+
+```sh
+gh release verify-asset v0.1.0 sidequest-companion-0.1.0-linux-x86_64.tar.gz --repo SideQuest-Guild/companion
 ```
 
 Each release also carries an SPDX SBOM (`.spdx.json`) and `SHA256SUMS.txt`. The companion itself checks both the
@@ -38,5 +44,5 @@ refuses to install on a mismatch.
 
 ## Versions
 
-Only the latest release gets fixes. Auto-update is on by default so most installs stay current; the companion also
-tells you in the tray when a newer version is available if you've turned auto-update off.
+Only the latest release gets fixes. The companion checks for a new version twice a day (unless you turn that off in
+**Settings**) and tells you when one is out; installing it takes one click.
