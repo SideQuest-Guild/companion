@@ -1,0 +1,333 @@
+name: Release
+
+# A v* tag builds every platform asset once, signs build provenance and an SBOM for them, and publishes them as an
+# immutable GitHub release. The self-updater and the addon installer both verify `gh attestation verify`-style
+# provenance, so every asset a user's companion downloads traces back to this workflow.
+#
+# Running the workflow by hand:
+# - with a tag (e.g. v0.2.0): rebuilds that tag and publishes it as a GitHub release, for a version whose release
+#   was lost or needs redoing. The tag is built with the release tooling from the branch the workflow runs on.
+# - without a tag: a dry run. It builds and attests every asset using the current Cargo.toml version and leaves a
+#   draft release named dry-run-<run id>. The draft can be deleted; nothing about it is permanent.
+#
+# Three build jobs (one per OS, since the asset shapes differ too much for one matrix) feed a `package` job that
+# builds the SBOM, checksums every asset and signs attestations, then a separate `github-release` job -- with only
+# contents:write, no signing permissions -- publishes them. This mirrors the addon release workflow's two-permission
+# split (signing vs. publishing) across a bigger build matrix.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to rebuild and publish on GitHub (blank for a dry run)"
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Check the tag
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9] ]] || [ "$(git describe --tags --exact-match)" != "$TAG" ]; then
+            echo "$TAG is not a v* tag" >&2
+            exit 1
+          fi
+
+      - name: Resolve the version
+        id: version
+        env:
+          PUSHED_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${PUSHED_TAG:-$INPUT_TAG}"
+          cargo_version="$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)"
+          if [ -n "$tag" ]; then
+            version="${tag#v}"
+            if [ "$version" != "$cargo_version" ]; then
+              echo "tag $tag does not match Cargo.toml version $cargo_version" >&2
+              exit 1
+            fi
+          else
+            version="$cargo_version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: Build (windows-${{ matrix.arch }})
+    needs: prepare
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - arch: aarch64
+            target: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Zip
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $name = "sidequest-companion-$env:VERSION-windows-$env:ARCH"
+          New-Item -ItemType Directory -Path stage | Out-Null
+          Copy-Item "target\$env:TARGET\release\sidequest-companion.exe" "stage\sidequest-companion.exe"
+          Compress-Archive -Path "stage\sidequest-companion.exe" -DestinationPath "$name.zip"
+        shell: pwsh
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-windows-${{ matrix.arch }}
+          path: "*.zip"
+          if-no-files-found: error
+
+  build-macos:
+    name: Build (macos-universal)
+    needs: prepare
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      # GPUI compiles Metal shaders at build time via `xcrun metal`, which only ships inside full Xcode.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: macos-universal
+
+      - name: Build (aarch64)
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Build (x86_64)
+        run: cargo build --release --locked --target x86_64-apple-darwin
+
+      - name: Assemble the app bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          ./packaging/macos/bundle.sh "$VERSION" \
+            target/aarch64-apple-darwin/release/sidequest-companion \
+            target/x86_64-apple-darwin/release/sidequest-companion \
+            target/bundle
+
+      - name: Zip the app bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        working-directory: target/bundle
+        run: ditto -c -k --keepParent "SideQuest Companion.app" "../../sidequest-companion-$VERSION-macos-universal.zip"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-macos-universal
+          path: "*.zip"
+          if-no-files-found: error
+
+  build-linux:
+    name: Build (linux-x86_64)
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            gcc g++ libasound2-dev libfontconfig-dev libgit2-dev libglib2.0-dev libssl-dev libva-dev libvulkan1 \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev make cmake clang lld llvm jq curl \
+            gettext-base elfutils libsqlite3-dev build-essential pipewire xdg-desktop-portal libstdc++-14-dev
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: linux-x86_64
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
+
+      - name: Assemble the tarball
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          name="sidequest-companion-$VERSION-linux-x86_64"
+          mkdir "$name"
+          cp target/x86_64-unknown-linux-gnu/release/sidequest-companion "$name/"
+          cp packaging/linux/sidequest-companion.desktop "$name/"
+          cp assets/icon.png "$name/sidequest-companion.png"
+          cp LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-linux-x86_64
+          path: "*.tar.gz"
+          if-no-files-found: error
+
+  package:
+    name: SBOM, checksums, attest
+    needs: [prepare, build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Sigstore certificate for the attestations
+      attestations: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0 # git-cliff reads every tag
+          persist-credentials: false
+
+      - name: Get the changelog config
+        run: git show "$GITHUB_SHA:cliff.toml" > "$RUNNER_TEMP/cliff.toml"
+
+      - name: Write release notes
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          config: ${{ runner.temp }}/cliff.toml
+          args: ${{ needs.prepare.outputs.tag != '' && '--latest --strip header' || '--unreleased --strip header' }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: asset-*
+          path: dist
+          merge-multiple: true
+
+      - name: Install Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+
+      - name: Write the SBOM
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+          SYFT_FILE_METADATA_SELECTION: all
+          SYFT_FILE_METADATA_DIGESTS: sha256
+        run: |
+          "$SYFT" scan dir:. --source-name sidequest-companion --source-version "$VERSION" \
+            -o "spdx-json=dist/sidequest-companion-$VERSION.spdx.json"
+
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum -- * > SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.tar.gz
+
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.tar.gz
+          sbom-path: dist/sidequest-companion-${{ env.VERSION }}.spdx.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            dist/*
+            CHANGELOG.md
+          if-no-files-found: error
+
+  github-release:
+    name: GitHub release
+    needs: [prepare, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+
+      # Immutable releases lock a release's assets and tag once it is published, so the release is drafted with every
+      # asset attached and published in a separate step.
+      - name: Draft and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.zip dist/*.tar.gz dist/*.spdx.json dist/SHA256SUMS.txt)
+          if [ -n "$TAG" ]; then
+            gh release create "$TAG" --draft --verify-tag --title "SideQuest Companion $TAG" --notes-file CHANGELOG.md "${assets[@]}"
+            gh release edit "$TAG" --draft=false
+          else
+            gh release create "dry-run-$GITHUB_RUN_ID" --draft --target "$GITHUB_SHA" --title "Dry run $GITHUB_RUN_ID" \
+              --notes-file CHANGELOG.md "${assets[@]}"
+          fi

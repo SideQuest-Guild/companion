@@ -1,0 +1,47 @@
+# cargo-deny config. Run with `make deny` (= `cargo deny check -W unmaintained`); CI runs the same command.
+# cargo-deny's config format has no severity knob for unmaintained-crate advisories (they're always errors unless
+# individually ignored below), so "warn, don't fail" is done via the `-W unmaintained` CLI lint flag instead.
+
+[graph]
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Every license actually selected by the dependency tree (OR-expressions resolve to whichever alternative is listed
+# here, so GPL/LGPL alternatives offered alongside a permissive one don't need to be listed). Re-run `cargo deny check
+# licenses` after adding a dependency; it reports the exact license string to add if this list falls short.
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "0BSD",
+  "ISC",
+  "Zlib",
+  "BSL-1.0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unlicense",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "OFL-1.1",
+  "Ubuntu-font-1.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

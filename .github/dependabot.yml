@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # Workflow actions are pinned to commit SHAs; Dependabot moves the SHA and the version comment together. The cooldown
+  # waits a week after a release, so a hijacked version is usually caught before it reaches a pull request here.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]

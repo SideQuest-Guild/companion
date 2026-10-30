@@ -1,0 +1,14 @@
+/target/
+Cargo.lock.bak
+
+# packaging output
+/.release/
+*.app/
+*.dSYM/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# local secrets fallback (never commit a real one)
+secrets.json

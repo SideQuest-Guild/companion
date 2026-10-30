@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SideQuest Companion
+Comment=Syncs the SideQuest WoW addon with sidequest-guild.com from your system tray
+Exec=sidequest-companion
+Icon=sidequest-companion
+Categories=Utility;
+Terminal=false
+NoDisplay=false
