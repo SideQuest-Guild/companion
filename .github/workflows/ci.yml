@@ -72,4 +72,6 @@ jobs:
       # so the GPUI system libraries above aren't needed here.
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
-          arguments: --all-features -W unmaintained
+          arguments: --all-features
+          # `-W` belongs to `check`, not to cargo-deny itself, so it goes after the command.
+          command-arguments: -W unmaintained
