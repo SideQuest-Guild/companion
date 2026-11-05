@@ -1,6 +1,9 @@
 //! Entry point: logging, single-instance handshake, `--hidden`/`--demo` flags, starts the
 //! background engine and hands off to the GPUI window + tray.
 
+// Release builds on Windows are GUI apps: no console window opens next to the tray icon. Logs go to the log file.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
