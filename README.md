@@ -14,8 +14,8 @@ Download the file for your system from the [latest release](https://github.com/S
 
 | System | File |
 |---|---|
-| Windows (Intel/AMD) | `sidequest-companion-X.Y.Z-windows-x86_64.zip` |
-| Windows (ARM) | `sidequest-companion-X.Y.Z-windows-aarch64.zip` |
+| Windows (Intel/AMD) | `sidequest-companion-X.Y.Z-windows-x86_64-setup.exe` |
+| Windows (ARM) | `sidequest-companion-X.Y.Z-windows-aarch64-setup.exe` |
 | macOS (Intel or Apple Silicon) | `sidequest-companion-X.Y.Z-macos-universal.zip` |
 | Linux (x86_64) | `sidequest-companion-X.Y.Z-linux-x86_64.tar.gz` |
 
@@ -24,9 +24,12 @@ signature (not a paid Apple Developer certificate), so the first launch is block
 the app and choose **Open**, or run `xattr -d com.apple.quarantine "SideQuest Companion.app"` once, then launch it
 normally from then on.
 
-**Windows:** unzip and run `sidequest-companion.exe`. SmartScreen will warn about an unrecognized app the first time;
-click **More info**, then **Run anyway**. This isn't a sign the file is unsafe. See
-[Verifying a download](#verifying-a-download) to check it yourself.
+**Windows:** run the setup file. SmartScreen will warn about an unrecognized app the first time; click **More info**,
+then **Run anyway**. This isn't a sign the file is unsafe. See [Verifying a download](#verifying-a-download) to check
+it yourself. Setup installs the app for you alone (no admin prompt) in `%LOCALAPPDATA%\Programs\SideQuest Companion`,
+adds it to the Start menu, and closes and replaces an older copy if one is running, including one you unzipped
+yourself. Uninstall it from **Settings → Apps**; your sign-in and settings stay in `%APPDATA%` in case you reinstall.
+The `-windows-x86_64.zip` holds the bare `sidequest-companion.exe` if you'd rather not install.
 
 **Linux:** untar anywhere, then run `sidequest-companion`. The tarball also has a `.desktop` file and an icon if you
 want it in your app launcher: copy `sidequest-companion.desktop` to `~/.local/share/applications/` and
