@@ -749,18 +749,27 @@ fn notice_toast(notice: &Notice, engine: &EngineHandle, cx: &mut Context<AppRoot
     };
     let id = notice.id;
     let engine = engine.clone();
+    // A fixed width (not just a max) gives the text a width to wrap at; without it the toast sizes to one long
+    // line, runs off the window's edge and pushes the dismiss cross out of view.
     div()
         .flex()
-        .items_center()
+        .items_start()
         .gap_3()
         .px(px(12.))
         .py(px(10.))
-        .max_w(px(320.))
+        .w(px(340.))
         .bg(palette::night2())
         .border_1()
         .border_color(palette::gold_inner())
-        .child(div().w(px(5.)).h(px(5.)).bg(color).flex_shrink_0())
-        .child(div().flex_1().text_sm().text_color(palette::ink()).child(notice.text.clone()))
+        .child(div().mt(px(7.)).w(px(5.)).h(px(5.)).bg(color).flex_shrink_0())
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_sm()
+                .text_color(palette::ink())
+                .child(notice.text.clone()),
+        )
         .child(
             div()
                 .id(("dismiss-notice", id))
