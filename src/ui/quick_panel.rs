@@ -34,12 +34,7 @@ thread_local! {
 
 /// Opens the quick panel near the tray, or closes it if one is already open (toggle). `demo`
 /// pins the panel to a demo snapshot instead of following the engine (for `--demo` screenshots).
-pub fn toggle(
-    engine: EngineHandle,
-    main_window: AnyWindowHandle,
-    demo: Option<Snapshot>,
-    cx: &mut App,
-) {
+pub fn toggle(engine: EngineHandle, demo: Option<Snapshot>, cx: &mut App) {
     let existing = OPEN_PANEL.with(|cell| *cell.borrow());
     if let Some(handle) = existing {
         OPEN_PANEL.with(|cell| *cell.borrow_mut() = None);
@@ -66,7 +61,7 @@ pub fn toggle(
     };
 
     let Ok((handle, _)) = gpui_kit::open_window(options, cx, |window, cx| {
-        cx.new(|cx| QuickPanel::new(engine.clone(), main_window, demo.clone(), window, cx))
+        cx.new(|cx| QuickPanel::new(engine.clone(), demo.clone(), window, cx))
     }) else {
         tracing::warn!("tray: failed to open the quick panel");
         return;
@@ -95,7 +90,6 @@ fn panel_origin(panel_size: Size<Pixels>, cx: &mut App) -> Point<Pixels> {
 
 struct QuickPanel {
     engine: EngineHandle,
-    main_window: AnyWindowHandle,
     snapshot: Snapshot,
     focus: FocusHandle,
     /// True once the panel has had a moment to receive OS activation. Dismiss-on-blur is
@@ -107,7 +101,6 @@ struct QuickPanel {
 impl QuickPanel {
     fn new(
         engine: EngineHandle,
-        main_window: AnyWindowHandle,
         demo: Option<Snapshot>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -148,7 +141,7 @@ impl QuickPanel {
         .detach();
 
         let snapshot = demo.unwrap_or_else(|| engine.snapshot());
-        Self { snapshot, engine, main_window, focus, settled: false }
+        Self { snapshot, engine, focus, settled: false }
     }
 
     fn close(&mut self, window: &mut Window) {
@@ -221,8 +214,6 @@ impl Render for QuickPanel {
             div().text_xs().text_color(palette::mist2()).child("Addon up to date")
         };
 
-        let main_window = self.main_window;
-
         let content = div()
             .flex()
             .flex_col()
@@ -272,9 +263,7 @@ impl Render for QuickPanel {
                 Button::new("quick-open-app").small().label("Open SideQuest Companion").on_click(
                     move |_, window, cx| {
                         tracing::info!("tray: quick panel Open SideQuest Companion clicked");
-                        let _ = main_window.update(cx, |_, window, _| {
-                            window.activate_window();
-                        });
+                        super::show_main_window(cx);
                         OPEN_PANEL.with(|cell| *cell.borrow_mut() = None);
                         window.remove_window();
                     },

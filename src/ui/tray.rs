@@ -7,7 +7,7 @@
 use std::cell::Cell;
 use std::time::Duration;
 
-use gpui_kit::{AnyWindowHandle, App, actions};
+use gpui_kit::{App, actions};
 use gpui_tray::{Icon as TrayIcon, Tray};
 
 use crate::engine::EngineHandle;
@@ -33,7 +33,7 @@ thread_local! {
 
 /// Installs the tray icon and its action handlers. The tray is kept alive in a process-lifetime
 /// static (dropping it would remove the native icon), since `run` never returns while the app is open.
-pub fn install(engine: EngineHandle, window: AnyWindowHandle, cx: &mut App) {
+pub fn install(engine: EngineHandle, cx: &mut App) {
     let initial_state = icon_state(&engine.snapshot().sync.phase);
     let Some(icon) = build_icon(initial_state) else {
         tracing::error!("tray: skipping the tray icon \u{2014} it failed to decode");
@@ -55,15 +55,13 @@ pub fn install(engine: EngineHandle, window: AnyWindowHandle, cx: &mut App) {
 
     cx.on_action(move |_: &TrayOpenWindow, cx| {
         tracing::info!("tray: Open SideQuest Companion clicked");
-        let _ = window.update(cx, |_, window, _| {
-            window.activate_window();
-        });
+        super::show_main_window(cx);
     });
 
     let engine_panel = engine.clone();
     cx.on_action(move |_: &TrayQuickPanel, cx| {
         tracing::info!("tray: Quick panel clicked");
-        quick_panel::toggle(engine_panel.clone(), window, None, cx);
+        quick_panel::toggle(engine_panel.clone(), None, cx);
     });
 
     cx.on_action(move |_: &TrayOpenWebsite, cx| {

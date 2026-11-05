@@ -32,10 +32,16 @@ fn main() {
         .position(|a| a == "--page")
         .and_then(|i| args.get(i + 1))
         .and_then(|value| sidequest_companion::ui::app::Page::from_flag(value));
+    let quit_flag = args.iter().any(|a| a == "--quit");
 
     init_logging();
 
-    if !demo && already_running() {
+    if quit_flag {
+        // The Windows installer and uninstaller run this to close the app before replacing it.
+        std::process::exit(if quit_running_instance() { 0 } else { 1 });
+    }
+
+    if !demo && send_to_running_instance(b"show\n").is_some() {
         tracing::info!(
             "another instance is already running; asked it to show its window and exiting"
         );
@@ -50,13 +56,16 @@ fn main() {
     let handle = engine::start(repaint).expect("failed to start the background engine");
     let start_hidden = hidden_flag || (!demo && handle.snapshot().settings.start_hidden);
 
+    let requests = Arc::new(ui::InstanceRequests::default());
     if !demo {
-        start_instance_server(handle.clone(), dirty.clone());
+        start_instance_server(handle.clone(), requests.clone());
+        sidequest_companion::self_update::record_installed_version();
     }
 
     ui::run(ui::RunOptions {
         engine: handle,
         dirty,
+        requests,
         demo_mode,
         start_hidden,
         initial_page,
@@ -110,20 +119,33 @@ fn instance_port_file() -> Option<std::path::PathBuf> {
     paths::data_dir().ok().map(|d| d.join("instance.port"))
 }
 
-/// If another instance is already listening on the recorded port, ask it to show its window and
-/// return `true`. Otherwise returns `false` (this process should become the running instance).
-fn already_running() -> bool {
-    let Some(port_file) = instance_port_file() else { return false };
-    let Ok(contents) = std::fs::read_to_string(&port_file) else { return false };
-    let Ok(port) = contents.trim().parse::<u16>() else { return false };
-    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else { return false };
+/// Sends `message` to the already running instance, if there is one. Returns the open connection so
+/// the caller can wait on it; `None` means no instance answered (this process may become it).
+fn send_to_running_instance(message: &[u8]) -> Option<TcpStream> {
+    let port_file = instance_port_file()?;
+    let port = std::fs::read_to_string(&port_file).ok()?.trim().parse::<u16>().ok()?;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream.set_write_timeout(Some(Duration::from_millis(500))).ok();
-    stream.write_all(b"show\n").is_ok()
+    stream.write_all(message).ok()?;
+    Some(stream)
 }
 
-/// Binds a localhost port, writes it to `instance.port`, and accepts the literal line `show` to
-/// bring this instance's window to the front. Runs on a background thread for the process lifetime.
-fn start_instance_server(handle: engine::EngineHandle, dirty: Arc<AtomicBool>) {
+/// Asks the running instance to shut down and waits until it has. True if none is left running.
+/// Versions before 0.3.4 ignore the request, which is why the installer falls back to ending the
+/// process when this reports failure.
+fn quit_running_instance() -> bool {
+    let Some(mut stream) = send_to_running_instance(b"quit\n") else { return true };
+    // The instance never writes back; reading returns once its process exits and the socket closes.
+    stream.set_read_timeout(Some(Duration::from_secs(20))).ok();
+    let mut buf = [0u8; 1];
+    let closed = matches!(stream.read(&mut buf), Ok(0) | Err(_));
+    closed && send_to_running_instance(b"ping\n").is_none()
+}
+
+/// Binds a localhost port, writes it to `instance.port`, and serves one-line requests from later
+/// launches: `show` brings the window to the front (reopening it if it was closed) and `quit` shuts
+/// the app down for an installer. Runs on a background thread for the process lifetime.
+fn start_instance_server(handle: engine::EngineHandle, requests: Arc<ui::InstanceRequests>) {
     let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) else {
         tracing::warn!(
             "could not bind the single-instance port; a second launch will open a second window"
@@ -138,17 +160,20 @@ fn start_instance_server(handle: engine::EngineHandle, dirty: Arc<AtomicBool>) {
     std::thread::Builder::new()
         .name("instance-server".into())
         .spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let mut stream = stream;
+            // Quit connections stay open until the process exits, so `--quit` can wait on them.
+            let mut waiting_to_quit = Vec::new();
+            for mut stream in listener.incoming().flatten() {
                 let mut line = [0u8; 8];
-                if stream.read(&mut line).is_ok() && line.starts_with(b"show") {
+                let Ok(read) = stream.read(&mut line) else { continue };
+                let line = &line[..read];
+                if line.starts_with(b"show") {
                     tracing::info!("a second launch asked us to show the window");
                     handle.send(sidequest_companion::state::Command::Rescan);
-                    dirty.store(true, Ordering::Release);
-                    // The UI's own poll loop notices `dirty`; showing the window itself happens via
-                    // the tray's `TrayOpenWindow` action dispatch, which `ui::tray` also drives from
-                    // a `window.activate_window()` call reachable from any thread through GPUI's
-                    // foreground executor. Here we only need the process to know it should wake up.
+                    requests.show.store(true, Ordering::Release);
+                } else if line.starts_with(b"quit") {
+                    tracing::info!("a second launch asked us to quit");
+                    requests.quit.store(true, Ordering::Release);
+                    waiting_to_quit.push(stream);
                 }
             }
         })

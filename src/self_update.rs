@@ -172,6 +172,39 @@ fn install_bytes(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The installer's Apps & features entry (see `packaging/windows/installer.nsi`).
+#[cfg(target_os = "windows")]
+const UNINSTALL_KEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\SideQuestCompanion";
+
+/// Keeps the version Apps & features shows in step with the running exe after a self-update, when this exe is
+/// the one the installer put there. Copies run from elsewhere (an unzipped download) leave the entry alone.
+#[cfg(target_os = "windows")]
+pub fn record_installed_version() {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
+
+    let Ok(key) = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey_with_flags(UNINSTALL_KEY, KEY_READ | KEY_WRITE)
+    else {
+        return;
+    };
+    let Ok(location) = key.get_value::<String, _>("InstallLocation") else { return };
+    let Some(exe_dir) =
+        std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    let same_dir = exe_dir.to_string_lossy().trim_end_matches('\\').to_lowercase()
+        == location.trim_end_matches('\\').to_lowercase();
+    if same_dir && let Err(err) = key.set_value("DisplayVersion", &env!("CARGO_PKG_VERSION")) {
+        tracing::warn!("could not update the installed version shown in Apps & features: {err}");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn record_installed_version() {}
+
 #[cfg(target_os = "windows")]
 fn extract_zip_member(bytes: &[u8], member_name: &str, dest: &Path) -> Result<()> {
     let mut archive =
