@@ -15,8 +15,8 @@ use crate::engine::Repaint;
 use crate::release::{self, VersionStatus};
 use crate::state::{
     Account, AccountState, Command, ConnectionState, EventsState, HistoryEntry, HistoryKind,
-    InstallSource, InstalledAddon, LoginState, Member, Notice, NoticeLevel, Outcome, ReminderScope,
-    Settings, Snapshot, SyncPhase, SyncStatus, TokenState, WowInstall,
+    InstalledAddon, LoginState, Member, Notice, NoticeLevel, Outcome, ReminderScope, Settings,
+    Snapshot, SyncPhase, SyncStatus, TokenState, WowInstall,
 };
 use crate::{addon_install, config, history, notifications, reminders, secrets, self_update, wow};
 
@@ -680,28 +680,11 @@ impl Engine {
     // --- Discovery and syncing ----------------------------------------------------------------------------------
 
     fn discover_installs(&mut self) {
-        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
-        let mut extra_roots = self.settings.wow_roots.clone();
-        #[cfg(target_os = "windows")]
-        if self.settings.auto_detect
-            && let Some(registry_root) = wow::discovery::registry_install_path()
-        {
-            extra_roots.push(registry_root);
-        }
-        let mut installs = if self.settings.auto_detect {
-            wow::discovery::scan_all(&extra_roots, &self.settings.disabled_accounts)
-        } else {
-            extra_roots
-                .iter()
-                .filter_map(|root| {
-                    wow::discovery::scan_install(
-                        root,
-                        InstallSource::UserAdded,
-                        &self.settings.disabled_accounts,
-                    )
-                })
-                .collect()
-        };
+        let mut installs = wow::discovery::scan_all(
+            &self.settings.wow_roots,
+            self.settings.auto_detect,
+            &self.settings.disabled_accounts,
+        );
         for install in &mut installs {
             for flavor in &mut install.flavors {
                 for account in &mut flavor.accounts {

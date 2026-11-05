@@ -15,9 +15,18 @@ use crate::state::Settings;
 const MIN_UI_SCALE: f32 = 0.75;
 const MAX_UI_SCALE: f32 = 1.5;
 
-/// Clamp whatever the UI or a hand-edited settings file sent us into a sane range.
+/// Clamp whatever the UI or a hand-edited settings file sent us into a sane range. A WoW folder picked inside a
+/// flavor folder (`_forever_`, its AddOns, ...) is stored as its install root, so Remove matches what's listed.
 pub fn clamp_settings(settings: &mut Settings) {
     settings.ui_scale = settings.ui_scale.clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+    let mut roots = Vec::with_capacity(settings.wow_roots.len());
+    for root in settings.wow_roots.drain(..) {
+        let root = crate::wow::discovery::install_root(root);
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    settings.wow_roots = roots;
 }
 
 fn settings_path() -> Result<PathBuf> {

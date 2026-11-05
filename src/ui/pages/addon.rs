@@ -202,7 +202,8 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
     let body = if any {
         cards.into_any_element()
     } else {
-        empty_state("No WoW installs found yet.").into_any_element()
+        empty_state("No WoW folder found yet. Add it in Settings \u{2192} WoW Folders.")
+            .into_any_element()
     };
     chamber_with("Installs", body)
 }

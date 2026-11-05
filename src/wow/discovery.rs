@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 
 use crate::state::{Account, Flavor, InstallSource, InstalledAddon, WowInstall};
 
-/// Default WoW install roots to probe for this OS, before checking the registry (Windows) or `wow_roots`.
+/// Usual WoW install roots to probe for this OS. [`detected_roots`] adds the ones Battle.net and the registry know.
 pub fn default_roots() -> Vec<PathBuf> {
     if cfg!(target_os = "macos") {
         vec![PathBuf::from("/Applications/World of Warcraft")]
@@ -95,17 +95,130 @@ fn glob_walk(current: &Path, segments: &[&str], results: &mut Vec<PathBuf>) {
     }
 }
 
+/// Every WoW install root this machine tells us about: the usual folders, every WoW game in Battle.net's
+/// `product.db` (which covers installs on any drive or folder), and on Windows the registry's `InstallPath`.
+pub fn detected_roots() -> Vec<PathBuf> {
+    let mut roots = default_roots();
+    roots.extend(battle_net_install_roots());
+    #[cfg(target_os = "windows")]
+    roots.extend(registry_install_path());
+    roots
+}
+
+/// Where the Battle.net agent keeps its record of installed games.
+fn battle_net_product_db() -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        let program_data = std::env::var_os("ProgramData")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+        Some(program_data.join(r"Battle.net\Agent\product.db"))
+    } else if cfg!(target_os = "macos") {
+        Some(PathBuf::from("/Users/Shared/Battle.net/Agent/product.db"))
+    } else {
+        None
+    }
+}
+
+fn battle_net_install_roots() -> Vec<PathBuf> {
+    let Some(path) = battle_net_product_db() else { return Vec::new() };
+    let Ok(bytes) = std::fs::read(path) else { return Vec::new() };
+    parse_product_db(&bytes)
+}
+
+/// The install folders of every WoW game (product codes `wow`, `wowf`, `wow_classic`, ...) in a Battle.net
+/// `product.db`. It's a protobuf: field 1 repeats one message per game, holding the product code in field 2 and a
+/// settings message in field 3 whose field 1 is the install folder.
+fn parse_product_db(bytes: &[u8]) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for (field, product) in length_delimited_fields(bytes) {
+        if field != 1 {
+            continue;
+        }
+        let product = length_delimited_fields(product);
+        if !product.iter().any(|&(field, code)| field == 2 && code.starts_with(b"wow")) {
+            continue;
+        }
+        for &(_, settings) in product.iter().filter(|&&(field, _)| field == 3) {
+            for (field, path) in length_delimited_fields(settings) {
+                if field == 1
+                    && let Ok(path) = std::str::from_utf8(path)
+                    && !path.is_empty()
+                {
+                    let root = install_root(PathBuf::from(path));
+                    if !roots.contains(&root) {
+                        roots.push(root);
+                    }
+                }
+            }
+        }
+    }
+    roots
+}
+
+/// The length-delimited fields (strings and nested messages) of one protobuf message, as (field number, bytes).
+/// Skips number fields and stops at the first malformed one.
+fn length_delimited_fields(mut bytes: &[u8]) -> Vec<(u64, &[u8])> {
+    let mut fields = Vec::new();
+    while let Some(key) = read_varint(&mut bytes) {
+        let skip = match key & 7 {
+            0 => read_varint(&mut bytes).map(|_| 0),
+            1 => Some(8),
+            5 => Some(4),
+            2 => match read_varint(&mut bytes).and_then(|len| usize::try_from(len).ok()) {
+                Some(len) if len <= bytes.len() => {
+                    fields.push((key >> 3, &bytes[..len]));
+                    Some(len)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        match skip {
+            Some(skip) if skip <= bytes.len() => bytes = &bytes[skip..],
+            _ => break,
+        }
+    }
+    fields
+}
+
+fn read_varint(bytes: &mut &[u8]) -> Option<u64> {
+    let mut value = 0u64;
+    for shift in (0..64).step_by(7) {
+        let (&byte, rest) = bytes.split_first()?;
+        *bytes = rest;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte < 0x80 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn is_flavor_name(name: &str) -> bool {
+    name.starts_with('_') && name.ends_with('_') && name.len() > 2
+}
+
+/// The install root holding the `_*_` flavor folders, for a path that may point inside one: Battle.net and the
+/// registry sometimes record `...\World of Warcraft\_retail_`, and people pick `_forever_` or its AddOns folder
+/// by hand.
+pub fn install_root(path: PathBuf) -> PathBuf {
+    let mut root = PathBuf::new();
+    for component in path.components() {
+        if is_flavor_name(&component.as_os_str().to_string_lossy()) {
+            return if root.as_os_str().is_empty() { path } else { root };
+        }
+        root.push(component);
+    }
+    path
+}
+
 /// Every `_*_` flavor folder directly under `root` (e.g. `_retail_`, `_classic_`, `_classic_beta_`). Forever's live
 /// flavor folder name isn't fixed, so we glob rather than hardcode one.
 pub fn find_flavor_dirs(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
     let mut dirs: Vec<PathBuf> = entries
         .flatten()
-        .filter(|e| {
-            let name = e.file_name();
-            let name = name.to_string_lossy();
-            e.path().is_dir() && name.starts_with('_') && name.ends_with('_') && name.len() > 2
-        })
+        .filter(|e| e.path().is_dir() && is_flavor_name(&e.file_name().to_string_lossy()))
         .map(|e| e.path())
         .collect();
     dirs.sort();
@@ -194,20 +307,24 @@ pub fn scan_install(
     Some(WowInstall { root: root.to_path_buf(), source, flavors })
 }
 
-/// Scan every default root plus `extra_roots` (deduplicated, defaults first), skipping ones that don't exist.
-pub fn scan_all(extra_roots: &[PathBuf], disabled_accounts: &[PathBuf]) -> Vec<WowInstall> {
+/// Scan `user_roots` and, with `auto_detect`, every [`detected_roots`] entry first. Paths inside a flavor folder
+/// count as their install root; each root is scanned once and missing ones are skipped.
+pub fn scan_all(
+    user_roots: &[PathBuf],
+    auto_detect: bool,
+    disabled_accounts: &[PathBuf],
+) -> Vec<WowInstall> {
+    let detected = if auto_detect { detected_roots() } else { Vec::new() };
+    let roots = detected
+        .into_iter()
+        .map(|root| (root, InstallSource::Detected))
+        .chain(user_roots.iter().map(|root| (root.clone(), InstallSource::UserAdded)));
     let mut seen = std::collections::HashSet::new();
     let mut installs = Vec::new();
-    for root in default_roots() {
+    for (root, source) in roots {
+        let root = install_root(root);
         if seen.insert(root.clone())
-            && let Some(install) = scan_install(&root, InstallSource::Detected, disabled_accounts)
-        {
-            installs.push(install);
-        }
-    }
-    for root in extra_roots {
-        if seen.insert(root.clone())
-            && let Some(install) = scan_install(root, InstallSource::UserAdded, disabled_accounts)
+            && let Some(install) = scan_install(&root, source, disabled_accounts)
         {
             installs.push(install);
         }
@@ -216,7 +333,7 @@ pub fn scan_all(extra_roots: &[PathBuf], disabled_accounts: &[PathBuf]) -> Vec<W
 }
 
 #[cfg(target_os = "windows")]
-pub fn registry_install_path() -> Option<PathBuf> {
+fn registry_install_path() -> Option<PathBuf> {
     use winreg::RegKey;
     use winreg::enums::HKEY_LOCAL_MACHINE;
 
@@ -224,18 +341,7 @@ pub fn registry_install_path() -> Option<PathBuf> {
     let key =
         hklm.open_subkey(r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft").ok()?;
     let install_path: String = key.get_value("InstallPath").ok()?;
-    Some(normalize_registry_install_path(PathBuf::from(install_path)))
-}
-
-/// The registry's `InstallPath` may point at a flavor subfolder (e.g. `...\World of Warcraft\_retail_`) rather
-/// than the root that contains every `_*_` folder; walk up to the root in that case.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn normalize_registry_install_path(path: PathBuf) -> PathBuf {
-    let is_flavor_dir = path
-        .file_name()
-        .map(|n| n.to_string_lossy())
-        .is_some_and(|n| n.starts_with('_') && n.ends_with('_'));
-    if is_flavor_dir { path.parent().map(Path::to_path_buf).unwrap_or(path) } else { path }
+    Some(PathBuf::from(install_path))
 }
 
 #[cfg(test)]
@@ -325,12 +431,52 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
-    fn normalizes_a_flavor_subfolder_install_path_to_its_root() {
-        let root = PathBuf::from(r"C:\Games\World of Warcraft");
-        let flavor = root.join("_retail_");
-        assert_eq!(normalize_registry_install_path(flavor), root);
-        assert_eq!(normalize_registry_install_path(root.clone()), root);
+    fn a_path_inside_a_flavor_folder_counts_as_its_install_root() {
+        let root = PathBuf::from("/Games/World of Warcraft");
+        assert_eq!(install_root(root.join("_retail_")), root);
+        assert_eq!(install_root(root.join("_forever_/Interface/AddOns")), root);
+        assert_eq!(install_root(root.clone()), root);
+    }
+
+    fn proto_field(field: u64, bytes: &[u8]) -> Vec<u8> {
+        let mut out =
+            vec![u8::try_from(field << 3 | 2).unwrap(), u8::try_from(bytes.len()).unwrap()];
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    fn product(code: &str, install_path: &str) -> Vec<u8> {
+        let mut settings = proto_field(1, install_path.as_bytes());
+        settings.extend(proto_field(13, b"_forever_"));
+        let mut message = proto_field(1, code.as_bytes());
+        message.extend(proto_field(2, code.as_bytes()));
+        message.extend([0x38, 0x00]); // field 7, a number: skipped
+        message.extend(proto_field(3, &settings));
+        proto_field(1, &message)
+    }
+
+    #[test]
+    fn battle_net_product_db_lists_every_wow_install_folder() {
+        let mut db = product("bna", "C:/Program Files (x86)/Battle.net");
+        db.extend(product("wowf", "D:/Games/World of Warcraft"));
+        db.extend(product("wow_classic", "D:/Games/World of Warcraft/_classic_"));
+        db.extend(product("wow", "E:/World of Warcraft"));
+        assert_eq!(
+            parse_product_db(&db),
+            vec![
+                PathBuf::from("D:/Games/World of Warcraft"),
+                PathBuf::from("E:/World of Warcraft")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_truncated_product_db_yields_what_it_could_read() {
+        let mut db = product("wowf", "D:/Games/World of Warcraft");
+        let mut second = product("wow", "E:/World of Warcraft");
+        second.truncate(second.len() - 3);
+        db.extend(second);
+        assert_eq!(parse_product_db(&db), vec![PathBuf::from("D:/Games/World of Warcraft")]);
     }
 }
