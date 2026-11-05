@@ -131,7 +131,7 @@ fn send_to_running_instance(message: &[u8]) -> Option<TcpStream> {
 }
 
 /// Asks the running instance to shut down and waits until it has. True if none is left running.
-/// Versions before 0.3.4 ignore the request, which is why the installer falls back to ending the
+/// Versions before 0.4.0 ignore the request, which is why the installer falls back to ending the
 /// process when this reports failure.
 fn quit_running_instance() -> bool {
     let Some(mut stream) = send_to_running_instance(b"quit\n") else { return true };

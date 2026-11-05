@@ -52,7 +52,7 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
 
 !insertmacro MUI_LANGUAGE "English"
 
-; Ask a running app to quit through its own single-instance port (`--quit`, from 0.3.4 on), then end any copy that
+; Ask a running app to quit through its own single-instance port (`--quit`, from 0.4.0 on), then end any copy that
 ; is still running: older versions ignore the request, and a copy unzipped elsewhere shares the same exe name.
 !macro CLOSE_RUNNING_APP QUIT_EXE
   ; ExecWait leaves $0 alone when it can't start the exe, so start from "still running".
