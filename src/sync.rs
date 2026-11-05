@@ -29,6 +29,9 @@ const WOW_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const NOTICE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const FS_DEBOUNCE: Duration = Duration::from_secs(2);
 const NOTICE_LIFETIME: chrono::Duration = chrono::Duration::seconds(6);
+/// What Sync now says when every account's export is already on the site (or none has one yet).
+const NOTHING_NEW_TO_SYNC: &str =
+    "Nothing new to sync. Type /sq export in game, then /reload so WoW saves it, and sync again.";
 const BASE_BACKOFF: Duration = Duration::from_secs(15);
 const MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
 /// How often a signed-in session is re-checked against `/me` (role changes, removal from the guild).
@@ -749,15 +752,14 @@ impl Engine {
         self.publish();
 
         if !self.is_signed_in() {
-            self.set_phase(SyncPhase::NeedsSetup("Sign in to start syncing.".to_owned()));
-            self.publish();
+            self.needs_setup("Sign in to start syncing.", force);
             return;
         }
         if !self.is_officer() {
-            self.set_phase(SyncPhase::NeedsSetup(
-                "Sync is for officers; you'll still get addon updates and reminders.".to_owned(),
-            ));
-            self.publish();
+            self.needs_setup(
+                "Sync is for officers; you'll still get addon updates and reminders.",
+                force,
+            );
             return;
         }
         if (self.paused || !self.settings.auto_sync) && !force {
@@ -766,19 +768,34 @@ impl Engine {
             return;
         }
         let Some(token) = self.token.clone() else {
-            self.set_phase(SyncPhase::NeedsSetup(
-                "Add a sync token in Settings to start syncing.".to_owned(),
-            ));
-            self.publish();
+            self.needs_setup("Add a sync token in Settings to start syncing.", force);
             return;
         };
         self.set_phase(SyncPhase::Watching);
-        self.upload_pending_exports(&token).await;
+        if force {
+            // Sync now is an explicit retry: don't skip accounts still waiting out a failure's backoff.
+            self.backoff.clear();
+        }
+        let attempted = self.upload_pending_exports(&token).await;
+        if force && attempted == 0 {
+            // Every upload already says how it went; a click that found nothing to send must say so too.
+            self.push_notice(NoticeLevel::Info, NOTHING_NEW_TO_SYNC.to_owned());
+        }
         self.discover_installs();
         self.publish();
     }
 
-    async fn upload_pending_exports(&mut self, token: &str) {
+    /// Sets a needs-setup phase. A forced sync (Sync now) also says why in a toast, so the click isn't silent.
+    fn needs_setup(&mut self, reason: &str, force: bool) {
+        self.set_phase(SyncPhase::NeedsSetup(reason.to_owned()));
+        if force {
+            self.push_notice(NoticeLevel::Warning, format!("Couldn't sync. {reason}"));
+        }
+        self.publish();
+    }
+
+    /// Uploads every enabled account's new export; returns how many uploads it tried.
+    async fn upload_pending_exports(&mut self, token: &str) -> usize {
         let now = Utc::now();
         let candidates: Vec<(PathBuf, String, String)> = self
             .installs
@@ -796,9 +813,11 @@ impl Engine {
             })
             .collect();
 
+        let attempted = candidates.len();
         for (saved_variables, account_name, export) in candidates {
             self.upload_one(token, &saved_variables, &account_name, &export).await;
         }
+        attempted
     }
 
     async fn upload_one(
@@ -1280,5 +1299,90 @@ mod tests {
             "/Applications/World of Warcraft/_retail_/WTF/Account/MYACCOUNT/SavedVariables/SideQuest.lua",
         );
         assert_eq!(account_label(&path), "_retail_ · MYACCOUNT");
+    }
+
+    fn test_engine(site_url: String, roots: Vec<PathBuf>) -> Engine {
+        let settings =
+            Settings { site_url, wow_roots: roots, auto_detect: false, ..Settings::default() };
+        let mut engine = Engine::new(
+            Arc::new(RwLock::new(Snapshot::default())),
+            Arc::new(|| {}),
+            settings,
+            Vec::new(),
+            config::SyncState::default(),
+            Some("sqs_test".to_owned()),
+            None,
+        );
+        engine.account = AccountState::SignedIn(crate::state::Member {
+            display_name: "Officer".to_owned(),
+            avatar_url: None,
+            is_officer: true,
+        });
+        engine
+    }
+
+    #[tokio::test]
+    async fn sync_now_with_nothing_new_says_so() {
+        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+        engine.rescan_and_sync(true).await;
+        assert!(engine.notices.iter().any(|n| n.text == NOTHING_NEW_TO_SYNC));
+
+        // A background rescan finding nothing stays quiet.
+        engine.notices.clear();
+        engine.rescan_and_sync(false).await;
+        assert!(engine.notices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sync_now_explains_why_it_cannot_sync() {
+        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+        engine.account = AccountState::SignedIn(crate::state::Member {
+            display_name: "Member".to_owned(),
+            avatar_url: None,
+            is_officer: false,
+        });
+        engine.rescan_and_sync(true).await;
+        assert!(matches!(engine.notices.as_slice(), [n] if n.level == NoticeLevel::Warning
+            && n.text.starts_with("Couldn't sync.")));
+    }
+
+    #[tokio::test]
+    async fn sync_now_retries_an_account_waiting_out_a_backoff() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/epgp/imports"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let root = tempfile::tempdir().unwrap();
+        let sv_dir = root.path().join("_forever_/WTF/Account/ACC/SavedVariables");
+        std::fs::create_dir_all(&sv_dir).unwrap();
+        let saved_variables = sv_dir.join("SideQuest.lua");
+        std::fs::write(
+            &saved_variables,
+            "SideQuestDB = {\n    [\"lastExport\"] = \"SQX1:abc\",\n}\n",
+        )
+        .unwrap();
+
+        let mut engine = test_engine(server.uri(), vec![root.path().to_path_buf()]);
+        engine.backoff.insert(
+            saved_variables,
+            BackoffEntry {
+                failures: 3,
+                next_attempt_at: Utc::now() + chrono::Duration::minutes(5),
+            },
+        );
+
+        engine.rescan_and_sync(false).await;
+        assert_eq!(server.received_requests().await.unwrap().len(), 0, "auto sync waits");
+
+        engine.rescan_and_sync(true).await;
+        assert_eq!(server.received_requests().await.unwrap().len(), 1, "Sync now retries");
+        assert!(engine.notices.iter().any(|n| n.level == NoticeLevel::Error));
+        assert!(!engine.notices.iter().any(|n| n.text == NOTHING_NEW_TO_SYNC));
     }
 }
