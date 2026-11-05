@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.0 (2026-11-05)
+
+### New
+
+- Windows releases include a setup.exe that installs the app, closes and replaces an older copy, and adds Start menu and uninstall entries
+
+### Fixed
+
+- Opening the app while it runs in the tray brings its window back, even after you closed it, and the tray's Open does too
+- The companion only lists WoW Forever folders, not Retail or Classic ones the SideQuest addon doesn't run in
+- The addon only shows an update when the installed version is older, and its version no longer reads vv0.5.2
 ## v0.3.3 (2026-11-05)
 
 ### Fixed
