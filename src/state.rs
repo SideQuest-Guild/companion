@@ -20,7 +20,8 @@ pub struct Settings {
     pub site_url: String,
     /// Extra WoW install folders the user added by hand (the folder holding `_classic_`, `_retail_`, ...).
     pub wow_roots: Vec<PathBuf>,
-    /// Look in the usual install places (and the Windows registry) as well as `wow_roots`.
+    /// Look in the usual install places, Battle.net's list of installed games and the Windows registry as well
+    /// as `wow_roots`.
     pub auto_detect: bool,
     /// Upload a new export as soon as WoW writes it.
     pub auto_sync: bool,

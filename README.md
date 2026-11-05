@@ -39,7 +39,8 @@ at where you put the binary.
    with a short code; check it matches the code in the app and click **Authorize**. You need to be signed in to the
    site as a guild member. The app shows nothing else until you sign in, so people outside the guild see nothing.
 2. That's it. The companion keeps its sign-in in your OS keyring, never in a plain settings file, and finds your WoW
-   installation on its own. If it guesses wrong, set the path in **Settings**.
+   installation on its own, wherever Battle.net put it. If it can't, open **Settings → WoW Folders**, choose
+   **Add folder** and pick your `World of Warcraft` folder.
 
 Sites that are too old for browser sign-in still work: open **Use a token instead** in **Settings** and paste a sync
 token from [sidequest-guild.com/officers/sync/](https://sidequest-guild.com/officers/sync/).
