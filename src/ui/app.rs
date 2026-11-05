@@ -579,7 +579,10 @@ impl AppRoot {
                     window
                         .spawn(cx, async move |_| {
                             engine.shutdown_blocking();
-                            if crate::self_update::can_self_update() {
+                            // On Windows setup is already closing this app and starts the new one itself.
+                            if crate::self_update::can_self_update()
+                                && !crate::self_update::INSTALLER_RESTARTS_APP
+                            {
                                 let _ = crate::self_update::relaunch();
                             }
                             std::process::exit(0);

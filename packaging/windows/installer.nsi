@@ -35,6 +35,7 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 !define MUI_ICON "${ICON}"
 !define MUI_UNICON "${ICON}"
@@ -51,6 +52,16 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 ${PUBLISHER}"
 !insertmacro MUI_UNPAGE_INSTFILES
 
 !insertmacro MUI_LANGUAGE "English"
+
+; The app's own updater runs `setup.exe /S /relaunch`: silent, so it starts the new version itself afterwards.
+Function .onInstSuccess
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/relaunch" $R1
+  ${IfNot} ${Errors}
+    Exec '"$INSTDIR\${APP_EXE}"'
+  ${EndIf}
+FunctionEnd
 
 ; Ask a running app to quit through its own single-instance port (`--quit`, from 0.4.0 on), then end any copy that
 ; is still running: older versions ignore the request, and a copy unzipped elsewhere shares the same exe name.

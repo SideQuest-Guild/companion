@@ -664,12 +664,15 @@ impl Engine {
                 );
             }
             Err(err) => {
-                self.app_update = crate::state::AppUpdate::Failed(err.to_string());
+                // `{:#}` keeps the cause ("Access is denied", ...) after the step that failed.
+                let message = format!("{err:#}");
+                tracing::warn!("app update failed: {message}");
+                self.app_update = crate::state::AppUpdate::Failed(message.clone());
                 self.push_history(
                     HistoryKind::AppUpdated,
                     Outcome::Failed,
                     "SideQuest Companion",
-                    &err.to_string(),
+                    &message,
                     None,
                 );
             }
@@ -1052,7 +1055,8 @@ impl Engine {
                 };
             }
             Err(err) => {
-                self.app_update = crate::state::AppUpdate::Failed(err.to_string());
+                tracing::warn!("checking for an app update failed: {err:#}");
+                self.app_update = crate::state::AppUpdate::Failed(format!("{err:#}"));
             }
         }
         self.publish();
@@ -1095,6 +1099,9 @@ impl Engine {
             &format!("Updated to v{version}; restarting to finish."),
         );
         self.flush();
+        if self_update::INSTALLER_RESTARTS_APP {
+            return; // setup closes this app through `--quit` and starts the new version
+        }
         match self_update::relaunch() {
             Ok(()) => std::process::exit(0),
             Err(err) => tracing::warn!("installed v{version} but could not relaunch: {err:#}"),

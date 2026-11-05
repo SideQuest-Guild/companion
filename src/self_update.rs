@@ -12,11 +12,11 @@ use crate::release::{self, GithubRelease};
 pub fn asset_name(version: &str) -> Option<String> {
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
     {
-        Some(format!("sidequest-companion-{version}-windows-aarch64.zip"))
+        Some(format!("sidequest-companion-{version}-windows-aarch64-setup.exe"))
     }
     #[cfg(all(target_os = "windows", not(target_arch = "aarch64")))]
     {
-        Some(format!("sidequest-companion-{version}-windows-x86_64.zip"))
+        Some(format!("sidequest-companion-{version}-windows-x86_64-setup.exe"))
     }
     #[cfg(target_os = "macos")]
     {
@@ -37,10 +37,17 @@ pub fn asset_name(version: &str) -> Option<String> {
     }
 }
 
-/// Whether this install can replace itself in place (the exe/bundle's directory is writable). The
-/// UI should offer a plain download link instead when this is `false` (e.g. a root-owned
-/// `/Applications` install or a distro package).
+/// On Windows an update runs the release's setup, which closes this app, installs the new version and starts it
+/// itself (see `packaging/windows/installer.nsi`). Callers must not relaunch or exit there; setup does both.
+pub const INSTALLER_RESTARTS_APP: bool = cfg!(target_os = "windows");
+
+/// Whether this install can update itself. On Windows setup installs per user, so always. Elsewhere the
+/// exe/bundle's directory must be writable; the UI should offer a plain download link when it isn't (e.g. a
+/// root-owned `/Applications` install or a distro package).
 pub fn can_self_update() -> bool {
+    if INSTALLER_RESTARTS_APP {
+        return true;
+    }
     match target_dir() {
         Ok(dir) => is_writable(&dir),
         Err(_) => false,
@@ -162,13 +169,20 @@ fn find_app_bundle(dir: &Path) -> Result<PathBuf> {
     anyhow::bail!("update zip has no .app bundle")
 }
 
+/// Hands the verified setup to Windows: it closes this app (through `--quit`), installs the new version for the
+/// current user and starts it (`/relaunch`). Replacing the running exe in place failed on some PCs, while setup is
+/// what installed the app to begin with.
 #[cfg(target_os = "windows")]
 fn install_bytes(bytes: &[u8]) -> Result<()> {
-    let temp_dir = tempfile::tempdir().context("creating a temp directory")?;
-    let new_exe = temp_dir.path().join("sidequest-companion.exe");
-    extract_zip_member(bytes, "sidequest-companion.exe", &new_exe)?;
-    self_replace::self_replace(&new_exe).context("replacing the running executable")?;
-    let _ = std::fs::remove_file(&new_exe);
+    // A fixed folder rather than a `TempDir`, which would delete the setup before it has run.
+    let dir = std::env::temp_dir().join("SideQuest Companion update");
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let setup = dir.join("sidequest-companion-setup.exe");
+    std::fs::write(&setup, bytes).with_context(|| format!("writing {}", setup.display()))?;
+    std::process::Command::new(&setup)
+        .args(["/S", "/relaunch"])
+        .spawn()
+        .context("starting the installer")?;
     Ok(())
 }
 
@@ -177,8 +191,9 @@ fn install_bytes(bytes: &[u8]) -> Result<()> {
 const UNINSTALL_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\SideQuestCompanion";
 
-/// Keeps the version Apps & features shows in step with the running exe after a self-update, when this exe is
-/// the one the installer put there. Copies run from elsewhere (an unzipped download) leave the entry alone.
+/// Keeps the version Apps & features shows in step with the running exe when something other than setup replaced
+/// it (0.4.0's updater swapped the exe in place), as long as this exe is the one setup put there. Copies run from
+/// elsewhere (an unzipped download) leave the entry alone.
 #[cfg(target_os = "windows")]
 pub fn record_installed_version() {
     use winreg::RegKey;
@@ -204,27 +219,6 @@ pub fn record_installed_version() {
 
 #[cfg(not(target_os = "windows"))]
 pub fn record_installed_version() {}
-
-#[cfg(target_os = "windows")]
-fn extract_zip_member(bytes: &[u8], member_name: &str, dest: &Path) -> Result<()> {
-    let mut archive =
-        zip::ZipArchive::new(std::io::Cursor::new(bytes)).context("opening the update zip")?;
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i).context("reading an update zip entry")?;
-        if file.is_symlink() {
-            continue;
-        }
-        let Some(name) = file.enclosed_name() else { continue };
-        if name.file_name().and_then(|n| n.to_str()) == Some(member_name) {
-            let mut out = std::fs::File::create(dest)
-                .with_context(|| format!("creating {}", dest.display()))?;
-            std::io::copy(&mut file, &mut out)
-                .with_context(|| format!("writing {}", dest.display()))?;
-            return Ok(());
-        }
-    }
-    anyhow::bail!("update zip has no {member_name}")
-}
 
 #[cfg(target_os = "linux")]
 fn install_bytes(bytes: &[u8]) -> Result<()> {
@@ -289,9 +283,9 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(name, "sidequest-companion-1.2.3-macos-universal.zip");
         #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-        assert_eq!(name, "sidequest-companion-1.2.3-windows-aarch64.zip");
+        assert_eq!(name, "sidequest-companion-1.2.3-windows-aarch64-setup.exe");
         #[cfg(all(target_os = "windows", not(target_arch = "aarch64")))]
-        assert_eq!(name, "sidequest-companion-1.2.3-windows-x86_64.zip");
+        assert_eq!(name, "sidequest-companion-1.2.3-windows-x86_64-setup.exe");
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         assert_eq!(name, "sidequest-companion-1.2.3-linux-x86_64.tar.gz");
     }
