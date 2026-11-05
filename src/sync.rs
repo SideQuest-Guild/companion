@@ -1073,6 +1073,49 @@ impl Engine {
             }
         }
         self.publish();
+
+        let auto_version = match &self.app_update {
+            crate::state::AppUpdate::Available(latest)
+                if should_auto_update_app(
+                    &self.settings,
+                    self_update::can_self_update(),
+                    self.sync_state.auto_update_attempted.as_deref(),
+                    &latest.version,
+                ) =>
+            {
+                Some(latest.version.clone())
+            }
+            _ => None,
+        };
+        if let Some(version) = auto_version {
+            self.auto_update_app(version).await;
+        }
+    }
+
+    /// Installs the update a check just found and restarts into it. The version is recorded first, so a
+    /// relaunch that still finds itself outdated can't install and restart over and over.
+    async fn auto_update_app(&mut self, version: String) {
+        self.sync_state.auto_update_attempted = Some(version.clone());
+        if let Err(err) = config::save_state(&self.sync_state) {
+            tracing::warn!(
+                "could not persist the auto-update attempt, not updating automatically: {err:#}"
+            );
+            return;
+        }
+        tracing::info!(%version, "installing app update automatically");
+        self.install_app_update().await;
+        if !matches!(self.app_update, crate::state::AppUpdate::ReadyToRestart(_)) {
+            return; // the failure is in the snapshot and history; the Install button stays
+        }
+        notifications::notify(
+            "SideQuest Companion",
+            &format!("Updated to v{version}; restarting to finish."),
+        );
+        self.flush();
+        match self_update::relaunch() {
+            Ok(()) => std::process::exit(0),
+            Err(err) => tracing::warn!("installed v{version} but could not relaunch: {err:#}"),
+        }
     }
 
     // --- Events and reminders -----------------------------------------------------------------------------------
@@ -1275,6 +1318,20 @@ fn account_label(saved_variables: &Path) -> String {
     }
 }
 
+/// Whether a check that found `latest` should install it unattended: the user left both update switches on,
+/// this install can replace itself, and this version hasn't been tried automatically before.
+fn should_auto_update_app(
+    settings: &Settings,
+    can_self_update: bool,
+    already_attempted: Option<&str>,
+    latest: &str,
+) -> bool {
+    settings.check_app_updates
+        && settings.auto_update_app
+        && can_self_update
+        && already_attempted != Some(latest)
+}
+
 fn backoff_delay(failures: u32) -> Duration {
     let multiplier = 1u32.checked_shl(failures.saturating_sub(1).min(10)).unwrap_or(u32::MAX);
     let candidate = BASE_BACKOFF.saturating_mul(multiplier);
@@ -1344,6 +1401,36 @@ mod tests {
         engine.rescan_and_sync(true).await;
         assert!(matches!(engine.notices.as_slice(), [n] if n.level == NoticeLevel::Warning
             && n.text.starts_with("Couldn't sync.")));
+    }
+
+    #[test]
+    fn auto_update_installs_each_version_once_and_respects_the_switches() {
+        let on = Settings::default();
+        assert!(on.auto_update_app, "on by default");
+        assert!(should_auto_update_app(&on, true, None, "0.2.2"));
+        assert!(
+            should_auto_update_app(&on, true, Some("0.2.1"), "0.2.2"),
+            "a newer version is tried"
+        );
+        assert!(
+            !should_auto_update_app(&on, true, Some("0.2.2"), "0.2.2"),
+            "never twice: no restart loop"
+        );
+        assert!(
+            !should_auto_update_app(&on, false, None, "0.2.2"),
+            "a read-only install waits for the user"
+        );
+
+        let off = Settings { auto_update_app: false, ..Settings::default() };
+        assert!(!should_auto_update_app(&off, true, None, "0.2.2"));
+        let no_checks = Settings { check_app_updates: false, ..Settings::default() };
+        assert!(!should_auto_update_app(&no_checks, true, None, "0.2.2"));
+    }
+
+    #[test]
+    fn settings_saved_before_auto_update_existed_turn_it_on() {
+        let old: Settings = serde_json::from_str(r#"{"check_app_updates": true}"#).unwrap();
+        assert!(old.auto_update_app);
     }
 
     #[tokio::test]

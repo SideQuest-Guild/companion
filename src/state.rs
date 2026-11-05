@@ -30,6 +30,8 @@ pub struct Settings {
     /// Install addon updates without asking (only while WoW is closed).
     pub auto_update_addon: bool,
     pub check_app_updates: bool,
+    /// Download and install a newer app version as soon as a check finds it, then restart into it.
+    pub auto_update_app: bool,
     pub reminders: ReminderSettings,
     pub launch_at_login: bool,
     /// Start with only the tray icon, no window.
@@ -57,6 +59,7 @@ impl Default for Settings {
             check_addon_updates: true,
             auto_update_addon: false,
             check_app_updates: true,
+            auto_update_app: true,
             reminders: ReminderSettings::default(),
             launch_at_login: false,
             start_hidden: false,

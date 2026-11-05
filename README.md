@@ -56,8 +56,9 @@ Every member gets:
   release's `SHA256SUMS.txt` first. It can also update the addon on its own whenever WoW is closed.
 - **Event reminders:** a notification before guild events you're signed up for (or every event, your choice), for
   the kinds you pick (raids, dungeons, world bosses, socials and more), from your own calendar on the site.
-- **App updates:** the companion checks its own releases twice a day, tells you when a new version is out, and
-  installs it in a click after checking it the same way.
+- **App updates:** the companion checks its own releases twice a day and, unless you switch off **Install app updates
+  automatically** in Settings, installs a new version on its own after checking it the same way, then restarts into
+  it. With the switch off it tells you a new version is out and installs it in a click.
 
 Officers also get:
 

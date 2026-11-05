@@ -609,6 +609,15 @@ impl SettingsPage {
                     }),
                 ))
                 .child(labeled_switch(
+                    "auto-update-app",
+                    "Install app updates automatically",
+                    self.draft.auto_update_app,
+                    cx.listener(|this, v, _, cx| {
+                        this.draft.auto_update_app = *v;
+                        this.mark_dirty(cx);
+                    }),
+                ))
+                .child(labeled_switch(
                     "reduce-motion",
                     "Reduce motion",
                     self.draft.reduce_motion,

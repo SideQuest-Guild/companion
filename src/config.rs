@@ -52,11 +52,15 @@ pub fn save_settings(settings: &Settings) -> Result<()> {
     atomic_write(&path, json.as_bytes())
 }
 
-/// Export upload bookkeeping, keyed by SHA-256 hex of the `SQX1:...` payload.
+/// Export upload bookkeeping, keyed by SHA-256 hex of the `SQX1:...` payload, plus the last app version an
+/// automatic update tried to install.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SyncState {
     pub uploaded_hashes: HashMap<String, DateTime<Utc>>,
+    /// Each version is installed automatically at most once: if the relaunched app still finds itself older
+    /// (a failed swap, a mislabelled release), it leaves the update to the Install button instead of looping.
+    pub auto_update_attempted: Option<String>,
 }
 
 impl SyncState {
