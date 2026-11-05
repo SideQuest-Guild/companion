@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.1 (2026-11-05)
+
+### Fixed
+
+- Messages in the corner wrap onto a second line instead of running off the window, and keep their close button
 ## v0.2.0 (2026-11-05)
 
 ### New
