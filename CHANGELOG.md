@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.2 (2026-11-05)
+
+### Fixed
+
+- On Windows the app no longer opens a console window next to it
+- The app finds WoW wherever Battle.net installed it, and a WoW folder added from inside _forever_ or AddOns still works
 ## v0.3.1 (2026-11-05)
 
 ### Fixed
