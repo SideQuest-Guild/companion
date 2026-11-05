@@ -70,9 +70,11 @@ shadows, and a custom window outline that collides with the native frame.
 - **macOS:** transparent title bar, native traffic lights at their standard position over the painting. Nothing is
   drawn under or around them: no outline, no chamfer, no frame line hugging the window edge. The window keeps the
   system's corner radius and shadow (the one place a radius exists, because it's the OS's).
-- **Windows / Linux:** the same painted head with caption buttons drawn by us at the right: 46x32 hit areas, 1px
-  gold-deep line glyphs (minimize bar, maximize square, close cross) in ink, hover fills stone-2, close hover fills
-  error at 80% with night glyph. Native resize edges stay.
+- **Windows / Linux:** the same painted head with caption buttons drawn by us, flush to the window's top-right corner
+  like the system's own: 46 px wide and the full 44 px nav row tall, 16 px clear of the last room link, 1px gold-deep
+  line glyphs (minimize bar, maximize square, close cross) centred in ink, hover fills stone-2, close hover fills
+  error at 80% with night glyph. Native resize edges stay. Room links block the row's drag area, or Windows treats
+  clicks on them as a title-bar grab.
 - **Navigation:** one row over the painting, like the website's nav: crest (24 px) and the wordmark
   `SIDEQUEST COMPANION` in display caps (0.54em) at left, after the traffic lights on macOS; room links at right in
   EB Garamond title case, 0.07em, mist at rest, ink on hover, the current room ink with a 1px gold-deep underline.

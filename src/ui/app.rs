@@ -92,9 +92,10 @@ const TITLE_BLOCK_HEIGHT: f32 = 72.;
 const CHROME_LEFT_PADDING: f32 = 80.;
 #[cfg(not(target_os = "macos"))]
 const CHROME_LEFT_PADDING: f32 = 16.;
-/// Windows/Linux caption button hit area (DESIGN.md: 46x32).
+/// Windows/Linux caption button width (DESIGN.md: 46 wide, the full nav row tall, flush to the corner).
 const CAPTION_BUTTON_WIDTH: f32 = 46.;
-const CAPTION_BUTTON_HEIGHT: f32 = 32.;
+/// Gap between the last room link and the caption buttons (or the window edge on macOS).
+const CHROME_RIGHT_PADDING: f32 = 16.;
 
 /// The "walking between rooms" moment's durations, ms.
 const OLD_LAYER_MS: u64 = 420;
@@ -442,6 +443,10 @@ impl AppRoot {
                         .items_center()
                         .h(px(NAV_ROW_HEIGHT))
                         .cursor_pointer()
+                        // The row behind is the window's drag area. On Windows the OS asks which control
+                        // area is under the cursor before any click reaches us, and an unblocked link would
+                        // answer "drag", turning every click into a title-bar grab.
+                        .occlude()
                         .text_size(px(13.))
                         .text_color(if active { palette::ink() } else { palette::mist() })
                         .when(active, |d| d.border_b_1().border_color(palette::gold_deep()))
@@ -508,20 +513,20 @@ impl AppRoot {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .pr(if is_macos { px(16.) } else { px(0.) })
+                    .pr(px(CHROME_RIGHT_PADDING))
                     .when(!is_web, |d| d.window_control_area(WindowControlArea::Drag))
                     .when_some(nav, |d, (left, right)| d.child(left).child(right)),
             )
             .when(!is_macos, |d| d.child(self.caption_buttons(window, cx)))
     }
 
-    /// Windows/Linux caption buttons: 46x32 hit areas, 1px line glyphs, hover fills stone-2,
-    /// close hover fills error at 80%.
+    /// Windows/Linux caption buttons: 46 wide and the full row tall, flush to the window's top-right
+    /// corner like the system's own; 1px line glyphs, hover fills stone-2, close hover fills error at 80%.
     fn caption_buttons(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let controls = window.window_controls();
         div()
             .flex()
-            .items_center()
+            .h(px(NAV_ROW_HEIGHT))
             .flex_shrink_0()
             .when(controls.minimize, |d| {
                 d.child(caption_button(
@@ -610,37 +615,43 @@ enum CaptionKind {
 /// A 1px line glyph (minimize bar, maximize square, close cross), drawn with stroked paths rather
 /// than a stock icon font, per `DESIGN.md`.
 fn caption_glyph(kind: CaptionKind, color: Hsla) -> Div {
-    div().absolute().inset_0().child(canvas(
-        |_, _, _| {},
-        move |bounds, _, window, _| {
-            let mx = bounds.origin.x + bounds.size.width / 2.;
-            let my = bounds.origin.y + bounds.size.height / 2.;
-            let half = px(5.);
-            let mut stroke = PathBuilder::stroke(px(1.));
-            match kind {
-                CaptionKind::Minimize => {
-                    stroke.move_to(point(mx - half, my));
-                    stroke.line_to(point(mx + half, my));
+    div().absolute().inset_0().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let mx = bounds.origin.x + bounds.size.width / 2.;
+                let my = bounds.origin.y + bounds.size.height / 2.;
+                let half = px(5.);
+                let mut stroke = PathBuilder::stroke(px(1.));
+                match kind {
+                    CaptionKind::Minimize => {
+                        stroke.move_to(point(mx - half, my));
+                        stroke.line_to(point(mx + half, my));
+                    }
+                    CaptionKind::Maximize => {
+                        stroke.move_to(point(mx - half, my - half));
+                        stroke.line_to(point(mx + half, my - half));
+                        stroke.line_to(point(mx + half, my + half));
+                        stroke.line_to(point(mx - half, my + half));
+                        stroke.close();
+                    }
+                    CaptionKind::Close => {
+                        stroke.move_to(point(mx - half, my - half));
+                        stroke.line_to(point(mx + half, my + half));
+                        stroke.move_to(point(mx + half, my - half));
+                        stroke.line_to(point(mx - half, my + half));
+                    }
                 }
-                CaptionKind::Maximize => {
-                    stroke.move_to(point(mx - half, my - half));
-                    stroke.line_to(point(mx + half, my - half));
-                    stroke.line_to(point(mx + half, my + half));
-                    stroke.line_to(point(mx - half, my + half));
-                    stroke.close();
+                if let Ok(path) = stroke.build() {
+                    window.paint_path(path, color);
                 }
-                CaptionKind::Close => {
-                    stroke.move_to(point(mx - half, my - half));
-                    stroke.line_to(point(mx + half, my + half));
-                    stroke.move_to(point(mx + half, my - half));
-                    stroke.line_to(point(mx - half, my + half));
-                }
-            }
-            if let Ok(path) = stroke.build() {
-                window.paint_path(path, color);
-            }
-        },
-    ))
+            },
+        )
+        // An unsized canvas paints into a zero-height box at the button's top edge, which is what put
+        // the glyphs half off the window on Windows.
+        .absolute()
+        .inset_0(),
+    )
 }
 
 /// A single Windows/Linux caption button. On Windows the OS drives the click via the window's own
@@ -660,7 +671,7 @@ fn caption_button(
         .id(id)
         .relative()
         .w(px(CAPTION_BUTTON_WIDTH))
-        .h(px(CAPTION_BUTTON_HEIGHT))
+        .h(px(NAV_ROW_HEIGHT))
         .flex_shrink_0()
         .cursor_pointer()
         .when(is_close, |d| d.hover(|s| s.bg(palette::warm_error().opacity(0.8))))
