@@ -38,6 +38,9 @@ pub struct SettingsPage {
     calendar_input: Entity<InputState>,
     token_disclosure_open: bool,
     _subscriptions: Vec<Subscription>,
+    /// Where the Reminders section was last laid out, so the Events tab's "Change in Settings" link can
+    /// scroll straight to it.
+    pub reminders_anchor: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
 }
 
 impl SettingsPage {
@@ -69,6 +72,7 @@ impl SettingsPage {
             calendar_input,
             token_disclosure_open: false,
             _subscriptions: vec![site_url_sub],
+            reminders_anchor: Default::default(),
         }
     }
 
@@ -456,6 +460,7 @@ impl SettingsPage {
             ReminderScope::AllEvents => 1,
         };
         let calendar_input = self.calendar_input.clone();
+        let anchor = self.reminders_anchor.clone();
         let engine_cal_set = self.engine.clone();
         let engine_cal_clear = self.engine.clone();
         section(
@@ -464,6 +469,11 @@ impl SettingsPage {
                 .flex()
                 .flex_col()
                 .gap_3()
+                .child(
+                    gpui_kit::canvas(move |bounds, _, _| anchor.set(Some(bounds)), |_, _, _, _| {})
+                        .w_full()
+                        .h(px(0.)),
+                )
                 .child(labeled_switch(
                     "reminders-enabled",
                     "Remind me about events",

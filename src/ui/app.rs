@@ -228,6 +228,28 @@ impl AppRoot {
         cx.notify();
     }
 
+    /// The Events tab's "Change in Settings → Reminders" link: open Settings and scroll its Reminders
+    /// section to the top. The section's position is only known once Settings has been laid out, so the
+    /// scroll waits a frame for that.
+    fn open_reminder_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to(Page::Settings, window, cx);
+        self.settings.read(cx).reminders_anchor.set(None);
+        cx.on_next_frame(window, |_, window, cx| {
+            cx.on_next_frame(window, |this, _, cx| this.scroll_to_reminders(cx));
+        });
+    }
+
+    fn scroll_to_reminders(&mut self, cx: &mut Context<Self>) {
+        let Some(anchor) = self.settings.read(cx).reminders_anchor.get() else { return };
+        let container = self.scroll_handle.bounds();
+        let mut offset = self.scroll_handle.offset();
+        // The anchor sits at the top of the section's body; leave room for its ribbon heading above it.
+        offset.y -= anchor.origin.y - container.origin.y - px(56.);
+        offset.y = offset.y.min(px(0.)).max(-self.scroll_handle.max_offset().y);
+        self.scroll_handle.set_offset(offset);
+        cx.notify();
+    }
+
     /// The painting backdrop: runs behind the nav row, the compact title and the chambers from
     /// y=0, about half the window tall, with a top scrim so the nav reads and a bottom mask
     /// dissolving into night over its lower 60%. Scroll-linked drift (0.3x, capped at the head
@@ -815,7 +837,11 @@ impl Render for AppRoot {
             )
             .into_any_element(),
             Page::Addon => pages::addon::render(&snapshot, &engine).into_any_element(),
-            Page::Events => pages::events::render(&snapshot).into_any_element(),
+            Page::Events => pages::events::render(
+                &snapshot,
+                cx.listener(|this, _, window, cx| this.open_reminder_settings(window, cx)),
+            )
+            .into_any_element(),
             Page::Settings => self.settings.clone().update(cx, |settings, cx| {
                 settings.render(&snapshot, window, cx).into_any_element()
             }),

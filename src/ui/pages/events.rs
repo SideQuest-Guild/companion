@@ -3,21 +3,28 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
 };
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{Div, IntoElement, ParentElement as _, Stateful, Styled as _, div};
+use gpui_kit::{
+    Div, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
+    StatefulInteractiveElement as _, Styled as _, div,
+};
 
 use crate::state::{ReminderScope, Snapshot, UpcomingEvent};
 use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
 use crate::ui::widgets::{Tone, chamber_with, empty_state, quest_log_row, state_tag};
 
-pub fn render(snapshot: &Snapshot) -> impl IntoElement {
+pub fn render(
+    snapshot: &Snapshot,
+    open_reminder_settings: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App)
+    + 'static,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .gap_4()
         .p_4()
         .child(events_chamber(snapshot))
-        .child(reminder_summary_chamber(snapshot))
+        .child(reminder_summary_chamber(snapshot, open_reminder_settings))
 }
 
 fn events_chamber(snapshot: &Snapshot) -> Div {
@@ -99,7 +106,11 @@ fn event_row(event: &UpcomingEvent) -> Stateful<Div> {
     )
 }
 
-fn reminder_summary_chamber(snapshot: &Snapshot) -> Div {
+fn reminder_summary_chamber(
+    snapshot: &Snapshot,
+    open_reminder_settings: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App)
+    + 'static,
+) -> Div {
     let r = &snapshot.settings.reminders;
     let scope = match r.scope {
         ReminderScope::SignedUp => "events you're signed up for",
@@ -124,9 +135,13 @@ fn reminder_summary_chamber(snapshot: &Snapshot) -> Div {
             .child(div().text_sm().text_color(palette::mist()).child(summary))
             .child(
                 div()
+                    .id("open-reminder-settings")
+                    .cursor_pointer()
                     .text_xs()
                     .text_color(palette::gold())
-                    .child("Change in Settings \u{2192} Reminders"),
+                    .hover(|s| s.underline())
+                    .child("Change in Settings \u{2192} Reminders")
+                    .on_click(open_reminder_settings),
             ),
     )
 }
