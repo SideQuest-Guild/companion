@@ -95,7 +95,7 @@ Sub-headings inside a chamber: display caps (0.24em) followed by a gold-deep lin
 - **No corner radius anywhere we draw.** Buttons, wells, tabs, chips, toasts, tooltips: hard rectangles.
 - **No box shadows.** Depth comes from the painting's mask, scrims, the chamber's double line, and text shadow on
   text over paint.
-- **Icons are drawn symbols, never a stock icon font:** the quest marks (gold "!" for open/needs action, dim "?"
+- **Icons are drawn symbols, never a stock icon font:** the quest marks (gold "!" for open/needs action, a dim drawn check
   for done), role marks, the outline diamond, the four-point star, caret chevrons in a 1px line. Paint them with
   paths in one 1.2 px gold or mist stroke. Delete every lucide/gpui-component icon from the UI.
 

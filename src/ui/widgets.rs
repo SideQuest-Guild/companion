@@ -284,17 +284,37 @@ pub fn diamond_mark(size: gpui_kit::Pixels, color: gpui_kit::Hsla) -> Div {
     )
 }
 
-/// A gold "!" for open/needs-action, a dim "?" for done: the quest marks.
+/// A gold "!" for open/needs-action, a dim drawn check for done. (WoW's "?" means "ready to turn in", which
+/// read as "unknown" next to events you had already answered.)
 pub fn quest_mark(done: bool) -> Div {
-    let color = if done { palette::mist2() } else { palette::gold() };
-    div()
-        .w(px(16.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .font_family(DISPLAY_FONT)
-        .text_color(color)
-        .child(if done { "?" } else { "!" })
+    let container = div().w(px(16.)).flex().items_center().justify_center();
+    if done {
+        return container.child(check_mark(px(11.), palette::mist2()));
+    }
+    container.font_family(DISPLAY_FONT).text_color(palette::gold()).child("!")
+}
+
+/// A drawn check in one 1.2px stroke (never a stock icon font).
+pub fn check_mark(size: gpui_kit::Pixels, color: gpui_kit::Hsla) -> Div {
+    div().relative().w(size).h(size).flex_shrink_0().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let o = bounds.origin;
+                let w = bounds.size.width;
+                let h = bounds.size.height;
+                let mut stroke = PathBuilder::stroke(px(1.2));
+                stroke.move_to(point(o.x + w * 0.1, o.y + h * 0.55));
+                stroke.line_to(point(o.x + w * 0.4, o.y + h * 0.85));
+                stroke.line_to(point(o.x + w * 0.9, o.y + h * 0.2));
+                if let Ok(path) = stroke.build() {
+                    window.paint_path(path, color);
+                }
+            },
+        )
+        .absolute()
+        .inset_0(),
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
