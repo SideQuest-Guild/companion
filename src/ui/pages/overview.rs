@@ -7,6 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Div, IntoElement, ParentElement as _, Styled as _, div};
 
 use crate::engine::EngineHandle;
+use crate::release::{self, VersionStatus};
 use crate::state::{
     Account, Command, Flavor, InstalledAddon, PendingCounts, ReleaseCheck, Snapshot, SyncPhase,
     TokenState,
@@ -252,14 +253,24 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                 InstalledAddon::Missing => None,
                 InstalledAddon::Installed { version, .. } => Some(version.clone()),
             };
-            let up_to_date = match (&installed, &latest_version) {
-                (Some(i), Some(l)) => i == l,
-                _ => false,
+            let status = match (&installed, &latest_version) {
+                (Some(i), Some(l)) => Some(release::compare(i, l)),
+                _ => None,
             };
+            // Only a missing or older install offers the button; a test build ahead of the release or a dev
+            // checkout doesn't, and neither does an install we can't compare (offline, odd version string).
+            let needs_update =
+                installed.is_none() || matches!(status, Some(VersionStatus::Outdated));
             let version_line = match (&installed, &latest_version) {
-                (Some(i), Some(l)) if i != l => format!("v{i} \u{2192} v{l} available"),
+                (Some(i), Some(l)) if needs_update => format!("v{i} \u{2192} v{l} available"),
                 (Some(i), _) => format!("v{i}"),
                 (None, _) => "not installed".to_owned(),
+            };
+            let (tag_label, tag_tone) = match status {
+                Some(VersionStatus::UpToDate) => ("Up to date", Tone::Good),
+                Some(VersionStatus::Ahead) => ("Ahead of latest", Tone::Neutral),
+                Some(VersionStatus::Development) => ("Dev checkout", Tone::Neutral),
+                _ => ("Installed", Tone::Neutral),
             };
             let flavor_path = flavor.path.clone();
             let engine = engine.clone();
@@ -291,8 +302,8 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                                             .child(version_line),
                                     ),
                             )
-                            .child(if up_to_date {
-                                state_tag("Up to date", Tone::Good).into_any_element()
+                            .child(if !needs_update {
+                                state_tag(tag_label, tag_tone).into_any_element()
                             } else {
                                 Button::new(format!("update-addon-{}", flavor.dir_name))
                                     .small()
@@ -312,7 +323,7 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                                     .into_any_element()
                             }),
                     )
-                    .when(disabled && !up_to_date, |this| {
+                    .when(disabled && needs_update, |this| {
                         this.child(
                             div()
                                 .text_xs()

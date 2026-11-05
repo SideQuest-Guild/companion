@@ -204,7 +204,10 @@ impl Render for QuickPanel {
         };
         let addon_outdated = self.snapshot.installs.iter().any(|install| {
             install.flavors.iter().any(|flavor| match (&flavor.addon, &latest_version) {
-                (InstalledAddon::Installed { version, .. }, Some(latest)) => version != latest,
+                (InstalledAddon::Installed { version, .. }, Some(latest)) => {
+                    crate::release::compare(version, latest)
+                        == crate::release::VersionStatus::Outdated
+                }
                 _ => false,
             })
         });
