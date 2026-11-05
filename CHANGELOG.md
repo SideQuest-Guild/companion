@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.3 (2026-11-05)
+
+### Fixed
+
+- On Windows the room links work again and the minimize, maximize and close buttons sit whole in the window's corner
 ## v0.3.2 (2026-11-05)
 
 ### Fixed
