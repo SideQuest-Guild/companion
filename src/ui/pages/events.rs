@@ -6,7 +6,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Div, IntoElement, ParentElement as _, Stateful, Styled as _, div};
 
 use crate::state::{ReminderScope, Snapshot, UpcomingEvent};
-use crate::ui::format::{ago, clock, until, weekday};
+use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
 use crate::ui::widgets::{Tone, chamber_with, empty_state, quest_log_row, state_tag};
 
@@ -22,7 +22,7 @@ pub fn render(snapshot: &Snapshot) -> impl IntoElement {
 
 fn events_chamber(snapshot: &Snapshot) -> Div {
     let body = if snapshot.events.upcoming.is_empty() {
-        empty_state("No upcoming raids.").into_any_element()
+        empty_state("No upcoming events.").into_any_element()
     } else {
         div()
             .flex()
@@ -36,7 +36,7 @@ fn events_chamber(snapshot: &Snapshot) -> Div {
         None => "Not checked yet".to_owned(),
     };
     chamber_with(
-        "Upcoming Raids",
+        "Upcoming Events",
         div()
             .flex()
             .flex_col()
@@ -63,8 +63,12 @@ fn event_row(event: &UpcomingEvent) -> Stateful<Div> {
         _ => ("No answer", Tone::Neutral),
     };
     let done = event.my_status.is_some() || event.cancelled;
-    let meta =
-        format!("{} \u{b7} {} \u{b7} {}", event.kind, event.location, until(event.starts_at));
+    let meta = format!(
+        "{} \u{b7} {} \u{b7} {}",
+        event_kind_label(&event.kind),
+        event.location,
+        until(event.starts_at)
+    );
     quest_log_row(
         format!("event-{}", event.id),
         done,
@@ -101,8 +105,11 @@ fn reminder_summary_chamber(snapshot: &Snapshot) -> Div {
         ReminderScope::SignedUp => "events you're signed up for",
         ReminderScope::AllEvents => "every scheduled event",
     };
-    let kinds =
-        if r.kinds.is_empty() { "no kinds selected".to_owned() } else { r.kinds.join(", ") };
+    let kinds = if r.kinds.is_empty() {
+        "no kinds selected".to_owned()
+    } else {
+        r.kinds.iter().map(|k| event_kind_label(k)).collect::<Vec<_>>().join(", ")
+    };
     let summary = if r.enabled {
         format!("{} minutes before {} ({})", r.lead_minutes, scope, kinds)
     } else {

@@ -8,5 +8,5 @@ Referenced from the top-level `README.md`. Captured at 960x640 from a debug buil
 - `overview-member.jpg` -- the Overview tab, member (next raid + addon, no sync chamber)
 - `history.jpg` -- the sync History tab
 - `addon.jpg` -- the addon update tab
-- `raids.jpg` -- the raid reminders tab
+- `events.jpg` -- the Events tab: upcoming guild events and reminders
 - `settings.jpg` -- the Settings tab

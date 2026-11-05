@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::time::Duration;
 
+use gpui_kit::base::Disableable as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,7 +20,7 @@ use gpui_kit::{
 
 use crate::engine::EngineHandle;
 use crate::state::{AccountState, Command, InstalledAddon, ReleaseCheck, Snapshot, SyncPhase};
-use crate::ui::format::{ago, clock, until, weekday};
+use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
 use crate::ui::widgets::{chamber_with, freshness_line, quest_log_row, sub_heading};
 
@@ -161,6 +162,7 @@ impl Render for QuickPanel {
         let engine_sync = self.engine.clone();
         let engine_pause = self.engine.clone();
         let paused = matches!(self.snapshot.sync.phase, SyncPhase::Paused);
+        let uploading = matches!(self.snapshot.sync.phase, SyncPhase::Uploading);
         let is_officer =
             matches!(&self.snapshot.account, AccountState::SignedIn(m) if m.is_officer);
         let signed_in = matches!(self.snapshot.account, AccountState::SignedIn(_));
@@ -174,24 +176,27 @@ impl Render for QuickPanel {
             }
         };
 
+        // The panel has no toast area, so the newest notice (a sync result, while it lasts) takes
+        // the freshness line's place: a Sync now click always gets an answer here.
         let freshness = if is_officer {
-            match self.snapshot.sync.last_success {
-                Some(at) => format!("Synced {}", ago(at)),
-                None => "Nothing synced yet".to_owned(),
+            match (self.snapshot.notices.last(), self.snapshot.sync.last_success) {
+                (Some(notice), _) => notice.text.clone(),
+                (None, Some(at)) => format!("Synced {}", ago(at)),
+                (None, None) => "Nothing synced yet".to_owned(),
             }
         } else {
-            "Updates and raid reminders are on.".to_owned()
+            "Updates and event reminders are on.".to_owned()
         };
 
-        let next_raid = self.snapshot.events.upcoming.iter().find(|e| !e.cancelled).map(|event| {
+        let next_event = self.snapshot.events.upcoming.iter().find(|e| !e.cancelled).map(|event| {
             let meta = format!(
                 "{} \u{b7} {} \u{b7} {}",
-                event.kind,
+                event_kind_label(&event.kind),
                 event.location,
                 until(event.starts_at)
             );
             quest_log_row(
-                "quick-raid",
+                "quick-event",
                 event.my_status.is_some(),
                 event.title.clone(),
                 meta,
@@ -232,7 +237,8 @@ impl Render for QuickPanel {
                             Button::new("quick-sync-now")
                                 .small()
                                 .primary()
-                                .label("Sync now")
+                                .disabled(uploading)
+                                .label(if uploading { "Syncing\u{2026}" } else { "Sync now" })
                                 .on_click(move |_, _, _| {
                                     tracing::info!("tray: quick panel Sync now clicked");
                                     engine_sync.send(Command::SyncNow);
@@ -252,12 +258,12 @@ impl Render for QuickPanel {
                         ),
                 )
             })
-            .child(sub_heading("Next raid"))
-            .child(next_raid.map(IntoElement::into_any_element).unwrap_or_else(|| {
+            .child(sub_heading("Next event"))
+            .child(next_event.map(IntoElement::into_any_element).unwrap_or_else(|| {
                 div()
                     .text_sm()
                     .text_color(palette::mist2())
-                    .child("No raids coming up.")
+                    .child("No events coming up.")
                     .into_any_element()
             }))
             .child(sub_heading("Addon"))

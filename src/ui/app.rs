@@ -33,19 +33,19 @@ pub enum Page {
     Overview,
     History,
     Addon,
-    Raids,
+    Events,
     Settings,
 }
 
 impl Page {
-    /// Parses the `--page` CLI flag's value (`overview`, `history`, `addon`, `raids`, `settings`),
+    /// Parses the `--page` CLI flag's value (`overview`, `history`, `addon`, `events`, `settings`),
     /// used to open directly on a page for screenshots and manual testing.
     pub fn from_flag(s: &str) -> Option<Self> {
         match s {
             "overview" => Some(Page::Overview),
             "history" => Some(Page::History),
             "addon" => Some(Page::Addon),
-            "raids" => Some(Page::Raids),
+            "events" => Some(Page::Events),
             "settings" => Some(Page::Settings),
             _ => None,
         }
@@ -57,7 +57,7 @@ impl Page {
             Page::Overview => "rooms/courier-loft.webp",
             Page::History => "rooms/ledger-chamber.webp",
             Page::Addon => "rooms/armory.webp",
-            Page::Raids => "rooms/raid-hall.webp",
+            Page::Events => "rooms/raid-hall.webp",
             Page::Settings => "rooms/round-table.webp",
         }
     }
@@ -72,7 +72,7 @@ const PAGES: &[(Page, &str)] = &[
     (Page::Overview, "Overview"),
     (Page::History, "History"),
     (Page::Addon, "Addon"),
-    (Page::Raids, "Raids"),
+    (Page::Events, "Events"),
     (Page::Settings, "Settings"),
 ];
 
@@ -806,7 +806,7 @@ impl Render for AppRoot {
             )
             .into_any_element(),
             Page::Addon => pages::addon::render(&snapshot, &engine).into_any_element(),
-            Page::Raids => pages::raids::render(&snapshot).into_any_element(),
+            Page::Events => pages::events::render(&snapshot).into_any_element(),
             Page::Settings => self.settings.clone().update(cx, |settings, cx| {
                 settings.render(&snapshot, window, cx).into_any_element()
             }),

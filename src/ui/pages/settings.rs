@@ -23,13 +23,11 @@ use crate::engine::EngineHandle;
 use crate::state::{
     AccountState, AppUpdate, Command, LoginState, ReminderScope, Settings, Snapshot,
 };
-use crate::ui::format::until;
+use crate::ui::format::{EVENT_KINDS, event_kind_label, until};
 use crate::ui::theme::{DISPLAY_FONT, palette};
 use crate::ui::widgets::{
     CaretDir, Tone, caret, chamber_with, checkbox, danger_button, state_tag, tracked_caps,
 };
-
-const REMINDER_KINDS: &[&str] = &["raid", "dungeon", "social"];
 
 pub struct SettingsPage {
     engine: EngineHandle,
@@ -468,7 +466,7 @@ impl SettingsPage {
                 .gap_3()
                 .child(labeled_switch(
                     "reminders-enabled",
-                    "Remind me about raids",
+                    "Remind me about events",
                     self.draft.reminders.enabled,
                     cx.listener(|this, v, _, cx| {
                         this.draft.reminders.enabled = *v;
@@ -490,11 +488,11 @@ impl SettingsPage {
                             })),
                     ),
                 )
-                .child(div().flex().gap_2().children(REMINDER_KINDS.iter().map(|kind| {
+                .child(div().flex().flex_wrap().gap_2().children(EVENT_KINDS.iter().map(|kind| {
                     let checked = self.draft.reminders.kinds.iter().any(|k| k == kind);
                     let kind = kind.to_string();
                     Checkbox::new(format!("reminder-kind-{kind}"))
-                        .label(kind.clone())
+                        .label(event_kind_label(&kind))
                         .checked(checked)
                         .on_change(cx.listener(move |this, checked, _, cx| {
                             if *checked {

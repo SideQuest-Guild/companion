@@ -171,9 +171,8 @@ fn build_event(ev: RawEvent) -> Option<UpcomingEvent> {
     })
 }
 
-/// Split `"<title> (<Kind label>)"` into `(title, Some(kind))`; the website's labels (`Raid`,
-/// `Dungeon`, `Leveling`, `PvP`, `Social`, `Transmog`, `Other`) lowercase directly to the `EventKind`
-/// wire values.
+/// Split `"<title> (<Kind label>)"` into `(title, Some(kind))`; the website's labels (`Raid`, `World Boss`,
+/// `PvP`, ...) lowercased with spaces as underscores are the `EventKind` wire values.
 fn split_kind_from_summary(summary: &str) -> (String, Option<String>) {
     if let Some(open) = summary.rfind('(')
         && summary.ends_with(')')
@@ -182,7 +181,7 @@ fn split_kind_from_summary(summary: &str) -> (String, Option<String>) {
         let label = &summary[open + 1..summary.len() - 1];
         if !label.is_empty() {
             let title = summary[..open].trim_end().to_owned();
-            return (title, Some(label.to_ascii_lowercase()));
+            return (title, Some(label.to_ascii_lowercase().replace(' ', "_")));
         }
     }
     (summary.to_owned(), None)
@@ -342,6 +341,14 @@ END:VCALENDAR\r\n";
         assert_eq!(dungeon.kind, "dungeon");
         assert!(dungeon.cancelled);
         assert_eq!(dungeon.my_status, None);
+    }
+
+    #[test]
+    fn summary_kind_label_with_a_space_maps_to_its_wire_value() {
+        assert_eq!(
+            split_kind_from_summary("Kazzak (World Boss)"),
+            ("Kazzak".to_owned(), Some("world_boss".to_owned()))
+        );
     }
 
     #[test]

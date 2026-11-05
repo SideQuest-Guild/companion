@@ -3,7 +3,7 @@
 A system-tray app for the [SideQuest](https://github.com/SideQuest-Guild/addon) guild addon. It watches the addon's
 save file, uploads new raid records to [sidequest-guild.com](https://sidequest-guild.com) as soon as they appear,
 stages the site's reply back for the addon to pick up at your next login, keeps the addon itself up to date, and
-reminds you before raids. It's a small native app built with [GPUI](https://www.gpui.rs/) -- no browser, no webview,
+reminds you before guild events. It's a small native app built with [GPUI](https://www.gpui.rs/) -- no browser, no webview,
 just a window that draws itself.
 
 ![Overview tab: last sync, upcoming raid, addon version](docs/screenshots/overview.jpg)
@@ -54,8 +54,8 @@ Every member gets:
 - **Addon updates:** the companion checks the addon's GitHub releases against the version installed in your
   `AddOns` folder and installs the latest one in a click, the same zip CurseForge serves, checked against the
   release's `SHA256SUMS.txt` first. It can also update the addon on its own whenever WoW is closed.
-- **Raid reminders:** a notification before raids you're signed up for (or every raid, your choice), from your own
-  calendar on the site.
+- **Event reminders:** a notification before guild events you're signed up for (or every event, your choice), for
+  the kinds you pick (raids, dungeons, world bosses, socials and more), from your own calendar on the site.
 - **App updates:** the companion checks its own releases twice a day, tells you when a new version is out, and
   installs it in a click after checking it the same way.
 
@@ -117,7 +117,7 @@ installed (not just the Command Line Tools), since GPUI compiles Metal shaders a
 same script (`packaging/macos/bundle.sh`) the release workflow uses, so you can test the bundle without waiting on CI.
 
 Screenshots for this README live in `docs/screenshots/`: `gate.jpg`, `sign-in.jpg`, `overview.jpg`,
-`overview-member.jpg`, `history.jpg`, `addon.jpg`, `raids.jpg`, `settings.jpg`.
+`overview-member.jpg`, `history.jpg`, `addon.jpg`, `events.jpg`, `settings.jpg`.
 
 ### Releasing
 

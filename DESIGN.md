@@ -49,7 +49,7 @@ shadows, and a custom window outline that collides with the native frame.
 | Overview | The Courier's Loft (`assets/rooms/courier-loft`, made for the app; prompt in SideQuest-Guild/.github `art/companion.txt`) | Officer: the sync chamber. Member: next raid + addon |
 | History | `ledger-chamber` | The ledger: quest-log rows of uploads/imports/installs |
 | Addon | `armory` | Item-tooltip card per game flavor, release notes |
-| Raids | `raid-hall` | Quest log of upcoming events, reminders |
+| Events | `raid-hall` | Quest log of upcoming guild events (every kind), reminders |
 | Settings | `round-table` | Chambers: Account, WoW folders, Sync, Updates, Reminders, App |
 
 - **Room backdrop (user, 2026-10-30: "less banner space, make the things go up so it's more backgrounded"):** the
@@ -116,7 +116,7 @@ Sub-headings inside a chamber: display caps (0.24em) followed by a gold-deep lin
   check stroke. Label to its right in body type. No pill toggles.
 - **State tags (instead of pills):** tracked label caps (0.18em, 12-13 px) in a color with a preceding 5 px diamond:
   gold diamond = needs you / pending; mist = done / quiet; error = failed. No filled backgrounds.
-- **Quest log rows (History, Raids, accounts):** quest mark at left, title in display caps (0.14em, long titles
+- **Quest log rows (History, Events, accounts):** quest mark at left, title in display caps (0.14em, long titles
   wrap), a mist meta line, time over day at the right in tabular numerals. Hover tints royal at 25% and turns the
   title gold. Rows divide with stone-2 hairlines. Expanded rows show detail as quoted text in flavor gold italic.
 - **Item tooltip (Addon):** the addon name in epic quality color, a "Version 0.3.0" line, installed vs latest as

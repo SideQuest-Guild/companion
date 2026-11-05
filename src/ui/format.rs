@@ -43,3 +43,37 @@ pub fn clock(at: DateTime<Utc>) -> String {
 pub fn weekday(at: DateTime<Utc>) -> String {
     at.with_timezone(&chrono::Local).format("%a").to_string()
 }
+
+/// Every event kind the website schedules (`EventKind` in the website's `schemas/events.py`), in its order.
+pub const EVENT_KINDS: &[&str] =
+    &["raid", "dungeon", "world_boss", "leveling", "pvp", "social", "transmog", "other"];
+
+/// A website event kind as the site labels it (`EVENT_KIND_LABELS`): `"world_boss"` to `"World Boss"`, `"pvp"` to
+/// `"PvP"`. A kind this build doesn't know yet (the site deploys on its own) is shown with its underscores as spaces.
+pub fn event_kind_label(kind: &str) -> String {
+    match kind {
+        "pvp" => "PvP".to_owned(),
+        "world_boss" => "World Boss".to_owned(),
+        other => {
+            let spaced = other.replace('_', " ");
+            let mut chars = spaced.chars();
+            chars
+                .next()
+                .map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_kind_labels_read_as_words() {
+        assert_eq!(event_kind_label("raid"), "Raid");
+        assert_eq!(event_kind_label("world_boss"), "World Boss");
+        assert_eq!(event_kind_label("pvp"), "PvP");
+        assert_eq!(event_kind_label("brand_new_kind"), "Brand new kind");
+        assert_eq!(event_kind_label(""), "");
+    }
+}

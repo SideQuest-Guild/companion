@@ -11,7 +11,7 @@ use crate::state::{
     Account, Command, Flavor, InstalledAddon, PendingCounts, ReleaseCheck, Snapshot, SyncPhase,
     TokenState,
 };
-use crate::ui::format::{ago, clock, until, weekday};
+use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
 use crate::ui::widgets::{
     Tone, chamber_with, empty_state, freshness_line, quest_log_row, state_tag,
@@ -35,17 +35,17 @@ pub fn render(snapshot: &Snapshot, engine: &EngineHandle) -> impl IntoElement {
                     .items_stretch()
                     .gap_4()
                     .child(div().flex_1().child(addon_chamber(snapshot, engine).h_full()))
-                    .child(div().flex_1().child(next_raid_chamber(snapshot).h_full())),
+                    .child(div().flex_1().child(next_event_chamber(snapshot).h_full())),
             )
     } else {
-        // Members never see sync controls or upload history: lead with their next raid and
+        // Members never see sync controls or upload history: lead with their next event and
         // addon, side by side so two short chambers don't leave empty space below them.
         div().flex().flex_col().gap_4().p_4().child(
             div()
                 .flex()
                 .items_stretch()
                 .gap_4()
-                .child(div().flex_1().child(next_raid_chamber(snapshot).h_full()))
+                .child(div().flex_1().child(next_event_chamber(snapshot).h_full()))
                 .child(div().flex_1().child(addon_chamber(snapshot, engine).h_full())),
         )
     }
@@ -61,6 +61,7 @@ fn sync_status_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
         SyncPhase::Error(_) => ("Error", Tone::Bad),
     };
     let paused = matches!(snapshot.sync.phase, SyncPhase::Paused);
+    let uploading = matches!(snapshot.sync.phase, SyncPhase::Uploading);
     let detail: Option<String> = match &snapshot.sync.phase {
         SyncPhase::NeedsSetup(reason) | SyncPhase::Error(reason) => Some(reason.clone()),
         _ => None,
@@ -117,7 +118,8 @@ fn sync_status_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                     .child(
                         Button::new("sync-now")
                             .primary()
-                            .label("Sync now")
+                            .disabled(uploading)
+                            .label(if uploading { "Syncing\u{2026}" } else { "Sync now" })
                             .on_click(move |_, _, _| engine_sync.send(Command::SyncNow)),
                     )
                     .child(
@@ -329,7 +331,7 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
     chamber_with("Addon", div().flex().flex_col().gap_3().child(body))
 }
 
-fn raid_status(my_status: Option<&str>) -> (&'static str, Tone) {
+fn event_status(my_status: Option<&str>) -> (&'static str, Tone) {
     match my_status {
         Some("signed") => ("Going", Tone::Good),
         Some("tentative") => ("Maybe", Tone::Warn),
@@ -338,20 +340,20 @@ fn raid_status(my_status: Option<&str>) -> (&'static str, Tone) {
     }
 }
 
-fn next_raid_chamber(snapshot: &Snapshot) -> Div {
+fn next_event_chamber(snapshot: &Snapshot) -> Div {
     let next = snapshot.events.upcoming.iter().find(|e| !e.cancelled);
     let body = match next {
         Some(event) => {
             let done = event.my_status.is_some();
             let meta = format!(
                 "{} \u{b7} {} \u{b7} {}",
-                event.kind,
+                event_kind_label(&event.kind),
                 event.location,
                 until(event.starts_at)
             );
-            let (label, tone) = raid_status(event.my_status.as_deref());
+            let (label, tone) = event_status(event.my_status.as_deref());
             quest_log_row(
-                "next-raid",
+                "next-event",
                 done,
                 event.title.clone(),
                 meta,
@@ -361,7 +363,7 @@ fn next_raid_chamber(snapshot: &Snapshot) -> Div {
             .child(div().flex_shrink_0().child(state_tag(label, tone)))
             .into_any_element()
         }
-        None => empty_state("No upcoming raids.").into_any_element(),
+        None => empty_state("No upcoming events.").into_any_element(),
     };
-    chamber_with("Next Raid", div().flex().flex_col().gap_3().child(body))
+    chamber_with("Next Event", div().flex().flex_col().gap_3().child(body))
 }
