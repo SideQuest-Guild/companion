@@ -230,10 +230,10 @@ pub enum InstallSource {
     UserAdded,
 }
 
-/// One game flavor folder inside an install, e.g. `_classic_beta_`.
+/// One game flavor folder inside an install, e.g. `_forever_`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flavor {
-    /// The folder name, e.g. `_classic_beta_`.
+    /// The folder name, e.g. `_forever_`.
     pub dir_name: String,
     pub path: PathBuf,
     pub addon: InstalledAddon,
@@ -289,7 +289,7 @@ pub struct HistoryEntry {
     pub at: DateTime<Utc>,
     pub kind: HistoryKind,
     pub outcome: Outcome,
-    /// What it was about, e.g. `_classic_beta_ · MYACCOUNT` or `addon v0.3.0`.
+    /// What it was about, e.g. `_forever_ · MYACCOUNT` or `addon v0.3.0`.
     pub subject: String,
     /// One line for the list, e.g. `2 sessions, 14 loot, 31 awards`.
     pub summary: String,

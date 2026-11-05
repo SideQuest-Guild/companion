@@ -212,13 +212,18 @@ pub fn install_root(path: PathBuf) -> PathBuf {
     path
 }
 
-/// Every `_*_` flavor folder directly under `root` (e.g. `_retail_`, `_classic_`, `_classic_beta_`). Forever's live
-/// flavor folder name isn't fixed, so we glob rather than hardcode one.
+/// The SideQuest addon only runs on WoW: Forever, so only its flavor folders count: `_forever_` and any test client
+/// beside it (`_forever_ptr_`, ...). `_retail_`, `_classic_` and the rest are left alone.
+fn is_supported_flavor(name: &str) -> bool {
+    is_flavor_name(name) && name.starts_with("_forever")
+}
+
+/// Every Forever flavor folder directly under `root` (see [`is_supported_flavor`]).
 pub fn find_flavor_dirs(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else { return Vec::new() };
     let mut dirs: Vec<PathBuf> = entries
         .flatten()
-        .filter(|e| e.path().is_dir() && is_flavor_name(&e.file_name().to_string_lossy()))
+        .filter(|e| e.path().is_dir() && is_supported_flavor(&e.file_name().to_string_lossy()))
         .map(|e| e.path())
         .collect();
     dirs.sort();
@@ -239,11 +244,14 @@ pub fn find_addon(flavor_dir: &Path) -> InstalledAddon {
     }
 }
 
+/// The `## Version:` value without the tag's leading `v` (`v0.5.2` reads as `0.5.2`), the same form as a release's
+/// version, so the two compare and display alike.
 fn read_toc_version(text: &str) -> Option<String> {
     for line in text.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("## Version:") {
-            return Some(rest.trim().to_owned());
+            let version = rest.trim();
+            return Some(version.strip_prefix('v').unwrap_or(version).to_owned());
         }
     }
     None
@@ -377,25 +385,29 @@ mod tests {
     }
 
     #[test]
-    fn scans_two_flavors_with_accounts_and_one_missing_addon() {
+    fn scans_only_forever_flavors_and_reads_the_addon_version_without_its_v() {
         let dir = tempdir().unwrap();
-        make_flavor(dir.path(), "_retail_", &["ACCOUNT1", "ACCOUNT2"], Some("v1.2.3"));
+        make_flavor(dir.path(), "_forever_", &["ACCOUNT1", "ACCOUNT2"], Some("v1.2.3"));
+        make_flavor(dir.path(), "_forever_ptr_", &["ACCOUNT1"], None);
+        // Other games' flavor folders, even with an account and the addon, aren't SideQuest's to manage.
+        make_flavor(dir.path(), "_retail_", &["ACCOUNT1"], Some("v1.0.0"));
         make_flavor(dir.path(), "_classic_beta_", &["ACCOUNT1"], None);
         // Not a flavor folder: no leading/trailing underscores.
         fs::create_dir_all(dir.path().join("Updates")).unwrap();
 
         let install = scan_install(dir.path(), InstallSource::Detected, &[]).unwrap();
-        assert_eq!(install.flavors.len(), 2);
+        let names: Vec<&str> = install.flavors.iter().map(|f| f.dir_name.as_str()).collect();
+        assert_eq!(names, ["_forever_", "_forever_ptr_"]);
 
-        let retail = install.flavors.iter().find(|f| f.dir_name == "_retail_").unwrap();
-        assert_eq!(retail.accounts.len(), 2);
+        let live = &install.flavors[0];
+        assert_eq!(live.accounts.len(), 2);
         assert!(
-            matches!(&retail.addon, InstalledAddon::Installed { version, .. } if version == "v1.2.3")
+            matches!(&live.addon, InstalledAddon::Installed { version, .. } if version == "1.2.3")
         );
 
-        let classic = install.flavors.iter().find(|f| f.dir_name == "_classic_beta_").unwrap();
-        assert_eq!(classic.accounts.len(), 1);
-        assert!(matches!(classic.addon, InstalledAddon::Missing));
+        let ptr = &install.flavors[1];
+        assert_eq!(ptr.accounts.len(), 1);
+        assert!(matches!(ptr.addon, InstalledAddon::Missing));
     }
 
     #[test]
@@ -410,8 +422,9 @@ mod tests {
     #[test]
     fn disabled_account_is_marked_disabled_but_still_listed() {
         let dir = tempdir().unwrap();
-        make_flavor(dir.path(), "_retail_", &["ACCOUNT1"], None);
-        let sv_path = dir.path().join("_retail_/WTF/Account/ACCOUNT1/SavedVariables/SideQuest.lua");
+        make_flavor(dir.path(), "_forever_", &["ACCOUNT1"], None);
+        let sv_path =
+            dir.path().join("_forever_/WTF/Account/ACCOUNT1/SavedVariables/SideQuest.lua");
 
         let install =
             scan_install(dir.path(), InstallSource::Detected, std::slice::from_ref(&sv_path))
@@ -424,7 +437,7 @@ mod tests {
     #[test]
     fn dev_checkout_version_placeholder_is_read_literally() {
         let dir = tempdir().unwrap();
-        make_flavor(dir.path(), "_retail_", &[], Some("@project-version@"));
+        make_flavor(dir.path(), "_forever_", &[], Some("@project-version@"));
         let install = scan_install(dir.path(), InstallSource::Detected, &[]).unwrap();
         assert!(
             matches!(&install.flavors[0].addon, InstalledAddon::Installed { version, .. } if version == "@project-version@")

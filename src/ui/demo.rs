@@ -67,7 +67,7 @@ pub fn snapshot() -> Snapshot {
         Account {
             name: "DEMOACCOUNT".into(),
             saved_variables: PathBuf::from(
-                "/Applications/World of Warcraft/_classic_beta_/WTF/Account/DEMOACCOUNT/SavedVariables/SideQuest.lua",
+                "/Applications/World of Warcraft/_forever_/WTF/Account/DEMOACCOUNT/SavedVariables/SideQuest.lua",
             ),
             enabled: true,
             modified: Some(now - Duration::minutes(12)),
@@ -80,7 +80,7 @@ pub fn snapshot() -> Snapshot {
         Account {
             name: "ALTACCOUNT".into(),
             saved_variables: PathBuf::from(
-                "/Applications/World of Warcraft/_classic_beta_/WTF/Account/ALTACCOUNT/SavedVariables/SideQuest.lua",
+                "/Applications/World of Warcraft/_forever_/WTF/Account/ALTACCOUNT/SavedVariables/SideQuest.lua",
             ),
             enabled: true,
             modified: Some(now - Duration::days(1)),
@@ -96,12 +96,12 @@ pub fn snapshot() -> Snapshot {
         root: PathBuf::from("/Applications/World of Warcraft"),
         source: InstallSource::Detected,
         flavors: vec![Flavor {
-            dir_name: "_classic_beta_".into(),
-            path: PathBuf::from("/Applications/World of Warcraft/_classic_beta_"),
+            dir_name: "_forever_".into(),
+            path: PathBuf::from("/Applications/World of Warcraft/_forever_"),
             addon: InstalledAddon::Installed {
                 version: "0.2.0".into(),
                 path: PathBuf::from(
-                    "/Applications/World of Warcraft/_classic_beta_/Interface/AddOns/SideQuest",
+                    "/Applications/World of Warcraft/_forever_/Interface/AddOns/SideQuest",
                 ),
             },
             accounts,
@@ -113,7 +113,7 @@ pub fn snapshot() -> Snapshot {
             at: now - Duration::minutes(12),
             kind: HistoryKind::Upload,
             outcome: Outcome::Success,
-            subject: "_classic_beta_ \u{b7} DEMOACCOUNT".into(),
+            subject: "_forever_ \u{b7} DEMOACCOUNT".into(),
             summary: "2 sessions, 14 loot, 31 awards".into(),
             detail: Some(
                 "recorder: Demo1\nsessions: 2 new\nencounters: 6 new\nloot: 14 new\nawards: 31 new\nunlinked_characters: []"
@@ -124,7 +124,7 @@ pub fn snapshot() -> Snapshot {
             at: now - Duration::hours(1),
             kind: HistoryKind::ImportStaged,
             outcome: Outcome::Success,
-            subject: "_classic_beta_ \u{b7} ALTACCOUNT".into(),
+            subject: "_forever_ \u{b7} ALTACCOUNT".into(),
             summary: "standings staged for next login".into(),
             detail: None,
         },
@@ -133,14 +133,14 @@ pub fn snapshot() -> Snapshot {
             kind: HistoryKind::AddonInstalled,
             outcome: Outcome::Success,
             subject: "addon v0.2.0".into(),
-            summary: "installed into _classic_beta_".into(),
+            summary: "installed into _forever_".into(),
             detail: None,
         },
         HistoryEntry {
             at: now - Duration::days(1),
             kind: HistoryKind::Upload,
             outcome: Outcome::Failed,
-            subject: "_classic_beta_ \u{b7} DEMOACCOUNT".into(),
+            subject: "_forever_ \u{b7} DEMOACCOUNT".into(),
             summary: "401 Unauthorized".into(),
             detail: Some("the sync token was rejected by sidequest-guild.com".into()),
         },
