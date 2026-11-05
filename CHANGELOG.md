@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.0 (2026-11-05)
+
+### New
+
+- The app installs its own updates and restarts into them, on by default; Settings > Install app updates automatically turns it off
 ## v0.2.1 (2026-11-05)
 
 ### Fixed
