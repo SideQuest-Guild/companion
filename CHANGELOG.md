@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1 (2026-11-05)
+
+### Fixed
+
+- On Windows the app updates itself by running the release's setup, which closes, replaces and restarts it, and a failed update says why
 ## v0.4.0 (2026-11-05)
 
 ### New
