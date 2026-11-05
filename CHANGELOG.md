@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1 (2026-11-05)
+
+### Fixed
+
+- Answered events and successful syncs show a check mark instead of a grey question mark
+- Change in Settings → Reminders on the Events tab is a link that opens Settings at Reminders
 ## v0.3.0 (2026-11-05)
 
 ### New
