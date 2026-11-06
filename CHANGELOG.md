@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.2 (2026-11-06)
+
+### Fixed
+
+- Sync now says why nothing was sent (no WoW install, no save file, no export yet, switched off, or already uploaded) and Settings shows each save file Companion watches; Windows installs registered under the 64-bit registry key are found too
 ## v0.4.1 (2026-11-05)
 
 ### Fixed
