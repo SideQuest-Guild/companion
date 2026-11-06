@@ -299,9 +299,21 @@ impl SettingsPage {
                             .justify_between()
                             .pl_4()
                             .py_1()
-                            .text_xs()
-                            .text_color(palette::mist())
-                            .child(format!("{} \u{b7} {}", flavor.dir_name, account.name))
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .text_xs()
+                                    .text_color(palette::mist())
+                                    .child(format!("{} \u{b7} {}", flavor.dir_name, account.name))
+                                    .child(
+                                        div()
+                                            .text_color(palette::mist2())
+                                            .child(account.saved_variables.display().to_string()),
+                                    ),
+                            )
                             .child(checkbox(
                                 format!("account-enabled-{}", account.name),
                                 enabled,

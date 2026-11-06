@@ -188,7 +188,13 @@ fn account_row(flavor: &Flavor, account: &Account, wow_running: bool) -> Div {
                         )
                         .when(wow_running, |this| this.child(state_tag("WoW running", Tone::Warn))),
                 )
-                .child(div().text_xs().text_color(palette::mist2()).child(pending_summary)),
+                .child(div().text_xs().text_color(palette::mist2()).child(pending_summary))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(palette::mist2())
+                        .child(account.saved_variables.display().to_string()),
+                ),
         )
         .child(
             div()

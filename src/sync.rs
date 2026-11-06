@@ -18,6 +18,7 @@ use crate::state::{
     InstalledAddon, LoginState, Member, Notice, NoticeLevel, Outcome, ReminderScope, Settings,
     Snapshot, SyncPhase, SyncStatus, TokenState, WowInstall,
 };
+use crate::ui::format::ago;
 use crate::{addon_install, config, history, notifications, reminders, secrets, self_update, wow};
 
 const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
@@ -29,7 +30,8 @@ const WOW_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const NOTICE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const FS_DEBOUNCE: Duration = Duration::from_secs(2);
 const NOTICE_LIFETIME: chrono::Duration = chrono::Duration::seconds(6);
-/// What Sync now says when every account's export is already on the site (or none has one yet).
+/// Generic fallback for a forced sync that found nothing to upload but none of [`Engine::sync_nothing_new_message`]'s
+/// more specific cases applied (e.g. an account is mid-backoff). The specific cases should cover almost everyone.
 const NOTHING_NEW_TO_SYNC: &str =
     "Nothing new to sync. Type /sq export in game, then /reload so WoW saves it, and sync again.";
 const BASE_BACKOFF: Duration = Duration::from_secs(15);
@@ -765,7 +767,7 @@ impl Engine {
         let attempted = self.upload_pending_exports(&token).await;
         if force && attempted == 0 {
             // Every upload already says how it went; a click that found nothing to send must say so too.
-            self.push_notice(NoticeLevel::Info, NOTHING_NEW_TO_SYNC.to_owned());
+            self.push_notice(NoticeLevel::Info, self.sync_nothing_new_message());
         }
         self.discover_installs();
         self.publish();
@@ -778,6 +780,78 @@ impl Engine {
             self.push_notice(NoticeLevel::Warning, format!("Couldn't sync. {reason}"));
         }
         self.publish();
+    }
+
+    /// Explains, as specifically as the engine's own discovered state allows, why a forced sync found nothing to
+    /// upload. Checked in the order a member would actually hit them: no install, no save file, no export in the
+    /// save, every account switched off, or every export already uploaded.
+    fn sync_nothing_new_message(&self) -> String {
+        if self.installs.is_empty() {
+            return if self.settings.auto_detect {
+                "No WoW: Forever install found on this computer. If it's installed somewhere Companion can't \
+                 see, add its folder in Settings \u{2192} WoW Folders."
+                    .to_owned()
+            } else {
+                "No WoW: Forever install found. Auto-detect is off in Settings; add the WoW folder there, or \
+                 turn auto-detect back on."
+                    .to_owned()
+            };
+        }
+
+        let accounts: Vec<&Account> =
+            self.installs.iter().flat_map(|i| &i.flavors).flat_map(|f| &f.accounts).collect();
+        if accounts.is_empty() {
+            let checked = self
+                .installs
+                .iter()
+                .flat_map(|i| &i.flavors)
+                .map(|f| f.path.join("WTF/Account/<name>/SavedVariables/SideQuest.lua"))
+                .next();
+            let where_ = match checked {
+                Some(path) => format!(" Companion checked {}.", path.display()),
+                None => {
+                    let roots: Vec<String> =
+                        self.installs.iter().map(|i| i.root.display().to_string()).collect();
+                    format!(" No WoW: Forever (_forever_) folder found under {}.", roots.join(", "))
+                }
+            };
+            return format!(
+                "WoW hasn't saved SideQuest data yet.{where_} Log in once with the addon enabled, then type \
+                 /reload."
+            );
+        }
+
+        let enabled: Vec<&Account> = accounts.iter().copied().filter(|a| a.enabled).collect();
+        if enabled.is_empty() {
+            return "Every save file Companion found is switched off in Settings \u{2192} WoW Folders. Turn \
+                     one back on to sync it."
+                .to_owned();
+        }
+
+        if let Some(account) = enabled.iter().find(|a| a.export_hash.is_none()) {
+            let path = account.saved_variables.display();
+            return format!(
+                "{} hasn't got an export yet ({path}). Type /sq export in game, then /reload so WoW saves it \
+                 (only officers' exports carry data).",
+                account_label(&account.saved_variables)
+            );
+        }
+
+        if enabled.iter().all(|a| a.export_uploaded) {
+            let latest = enabled
+                .iter()
+                .filter_map(|a| a.export_hash.as_ref())
+                .filter_map(|h| self.sync_state.uploaded_hashes.get(h))
+                .max();
+            return match latest {
+                Some(at) => {
+                    format!("Nothing new to sync. The latest export was uploaded {}.", ago(*at))
+                }
+                None => NOTHING_NEW_TO_SYNC.to_owned(),
+            };
+        }
+
+        NOTHING_NEW_TO_SYNC.to_owned()
     }
 
     /// Uploads every enabled account's new export; returns how many uploads it tried.
@@ -1372,12 +1446,125 @@ mod tests {
     async fn sync_now_with_nothing_new_says_so() {
         let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
         engine.rescan_and_sync(true).await;
-        assert!(engine.notices.iter().any(|n| n.text == NOTHING_NEW_TO_SYNC));
+        assert!(engine.notices.iter().any(|n| n.text == engine.sync_nothing_new_message()));
 
         // A background rescan finding nothing stays quiet.
         engine.notices.clear();
         engine.rescan_and_sync(false).await;
         assert!(engine.notices.is_empty());
+    }
+
+    fn write_account(root: &Path, flavor: &str, account: &str, body: &str) -> PathBuf {
+        let sv_dir = root.join(flavor).join("WTF/Account").join(account).join("SavedVariables");
+        std::fs::create_dir_all(&sv_dir).unwrap();
+        let path = sv_dir.join("SideQuest.lua");
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn nothing_new_message_says_no_install_found() {
+        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+        engine.discover_installs();
+        assert_eq!(
+            engine.sync_nothing_new_message(),
+            "No WoW: Forever install found. Auto-detect is off in Settings; add the WoW folder there, or \
+             turn auto-detect back on."
+        );
+    }
+
+    #[test]
+    fn nothing_new_message_says_no_save_file_yet() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("_forever_")).unwrap();
+        let mut engine =
+            test_engine("http://127.0.0.1:9".to_owned(), vec![root.path().to_path_buf()]);
+        engine.discover_installs();
+        let message = engine.sync_nothing_new_message();
+        assert!(message.starts_with("WoW hasn't saved SideQuest data yet."), "{message}");
+        assert!(message.contains("WTF/Account"), "{message}");
+    }
+
+    #[test]
+    fn nothing_new_message_names_the_save_with_no_export() {
+        let root = tempfile::tempdir().unwrap();
+        let sv = write_account(root.path(), "_forever_", "ACC", "SideQuestDB = {\n}\n");
+        let mut engine =
+            test_engine("http://127.0.0.1:9".to_owned(), vec![root.path().to_path_buf()]);
+        engine.discover_installs();
+        let message = engine.sync_nothing_new_message();
+        assert!(message.contains(&sv.display().to_string()), "{message}");
+        assert!(message.contains("/sq export"), "{message}");
+    }
+
+    #[test]
+    fn nothing_new_message_says_every_account_switched_off() {
+        let root = tempfile::tempdir().unwrap();
+        let sv = write_account(
+            root.path(),
+            "_forever_",
+            "ACC",
+            "SideQuestDB = {\n    [\"lastExport\"] = \"SQX1:abc\",\n}\n",
+        );
+        let mut engine =
+            test_engine("http://127.0.0.1:9".to_owned(), vec![root.path().to_path_buf()]);
+        engine.settings.disabled_accounts = vec![sv];
+        engine.discover_installs();
+        assert!(
+            engine
+                .sync_nothing_new_message()
+                .starts_with("Every save file Companion found is switched off")
+        );
+    }
+
+    #[test]
+    fn nothing_new_message_says_when_the_latest_export_was_uploaded() {
+        let root = tempfile::tempdir().unwrap();
+        write_account(
+            root.path(),
+            "_forever_",
+            "ACC",
+            "SideQuestDB = {\n    [\"lastExport\"] = \"SQX1:abc\",\n}\n",
+        );
+        let mut sync_state = config::SyncState::default();
+        sync_state.mark_uploaded(&sha256_hex("SQX1:abc"), Utc::now());
+        let mut engine =
+            test_engine("http://127.0.0.1:9".to_owned(), vec![root.path().to_path_buf()]);
+        engine.sync_state = sync_state;
+        engine.discover_installs();
+        let message = engine.sync_nothing_new_message();
+        assert!(
+            message.starts_with("Nothing new to sync. The latest export was uploaded"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn nothing_new_message_falls_back_for_mixed_backoff_state() {
+        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+        let saved_variables =
+            PathBuf::from("/tmp/fake/_forever_/WTF/Account/ACC/SavedVariables/SideQuest.lua");
+        engine.installs = vec![WowInstall {
+            root: PathBuf::from("/tmp/fake"),
+            source: crate::state::InstallSource::UserAdded,
+            flavors: vec![crate::state::Flavor {
+                dir_name: "_forever_".to_owned(),
+                path: PathBuf::from("/tmp/fake/_forever_"),
+                addon: InstalledAddon::Missing,
+                accounts: vec![Account {
+                    name: "ACC".to_owned(),
+                    saved_variables,
+                    enabled: true,
+                    modified: None,
+                    pending: None,
+                    export_hash: Some("deadbeef".to_owned()),
+                    export_uploaded: false,
+                    inbox_staged: false,
+                    standings_generated_at: None,
+                }],
+            }],
+        }];
+        assert_eq!(engine.sync_nothing_new_message(), NOTHING_NEW_TO_SYNC);
     }
 
     #[tokio::test]

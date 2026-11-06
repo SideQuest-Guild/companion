@@ -340,16 +340,31 @@ pub fn scan_all(
     installs
 }
 
+/// Registry locations that may hold WoW's `InstallPath`, most to least likely to have it: the native view a
+/// modern 64-bit Battle.net Agent/installer writes to, then `WOW6432Node`, where Windows redirects a 32-bit
+/// process's `SOFTWARE` writes and where older/legacy installers wrote directly. Checking only the second
+/// (the previous behaviour) misses every native 64-bit install, which is the common case today.
+#[cfg(target_os = "windows")]
+const REGISTRY_INSTALL_KEYS: &[&str] = &[
+    r"SOFTWARE\Blizzard Entertainment\World of Warcraft",
+    r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft",
+];
+
+#[cfg(target_os = "windows")]
+fn registry_install_path_in(hive: winreg::RegKey) -> Option<PathBuf> {
+    REGISTRY_INSTALL_KEYS.iter().find_map(|subkey| {
+        let key = hive.open_subkey(subkey).ok()?;
+        let install_path: String = key.get_value("InstallPath").ok()?;
+        Some(PathBuf::from(install_path))
+    })
+}
+
 #[cfg(target_os = "windows")]
 fn registry_install_path() -> Option<PathBuf> {
     use winreg::RegKey;
     use winreg::enums::HKEY_LOCAL_MACHINE;
 
-    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let key =
-        hklm.open_subkey(r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft").ok()?;
-    let install_path: String = key.get_value("InstallPath").ok()?;
-    Some(PathBuf::from(install_path))
+    registry_install_path_in(RegKey::predef(HKEY_LOCAL_MACHINE))
 }
 
 #[cfg(test)]
@@ -491,5 +506,43 @@ mod tests {
         second.truncate(second.len() - 3);
         db.extend(second);
         assert_eq!(parse_product_db(&db), vec![PathBuf::from("D:/Games/World of Warcraft")]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn registry_install_path_prefers_the_native_key_over_wow6432node() {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_CURRENT_USER;
+
+        // HKCU needs no admin rights, unlike the HKLM the production code reads, but Windows resolves the
+        // same relative subkey names under it, so the precedence logic exercises identically.
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        struct Cleanup<'a>(&'a RegKey, &'a str);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let _ = self.0.delete_subkey_all(self.1);
+            }
+        }
+        let native_key = r"Software\Blizzard Entertainment\World of Warcraft";
+        let legacy_key = r"Software\WOW6432Node\Blizzard Entertainment\World of Warcraft";
+        let _cleanup_native = Cleanup(&hkcu, native_key);
+        let _cleanup_legacy = Cleanup(&hkcu, legacy_key);
+
+        let (legacy, _) = hkcu.create_subkey(legacy_key).unwrap();
+        legacy.set_value("InstallPath", &r"C:\Program Files (x86)\World of Warcraft").unwrap();
+
+        // Only the WOW6432Node key exists: that's still found (the previous, pre-fix behaviour).
+        assert_eq!(
+            registry_install_path_in(RegKey::predef(HKEY_CURRENT_USER)),
+            Some(PathBuf::from(r"C:\Program Files (x86)\World of Warcraft"))
+        );
+
+        // Once the native 64-bit key also exists, it wins: that's where a modern Agent actually writes.
+        let (native, _) = hkcu.create_subkey(native_key).unwrap();
+        native.set_value("InstallPath", &r"D:\Games\World of Warcraft").unwrap();
+        assert_eq!(
+            registry_install_path_in(RegKey::predef(HKEY_CURRENT_USER)),
+            Some(PathBuf::from(r"D:\Games\World of Warcraft"))
+        );
     }
 }
