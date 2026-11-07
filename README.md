@@ -57,7 +57,8 @@ Every member gets:
 
 - **Addon updates:** the companion checks the addon's GitHub releases against the version installed in your
   `AddOns` folder and installs the latest one in a click, the same zip CurseForge serves, checked against the
-  release's `SHA256SUMS.txt` first. It can also update the addon on its own whenever WoW is closed.
+  release's `SHA256SUMS.txt` first. It can also update the addon on its own. WoW doesn't have to be closed: like
+  CurseForge, it swaps the files in place, and `/reload` in game loads the new version.
 - **Event reminders:** a notification before guild events you're signed up for (or every event, your choice), for
   the kinds you pick (raids, dungeons, world bosses, socials and more), from your own calendar on the site.
 - **App updates:** the companion checks its own releases twice a day and, unless you switch off **Install app updates

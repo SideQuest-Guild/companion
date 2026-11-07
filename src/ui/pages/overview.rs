@@ -280,7 +280,7 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
             };
             let flavor_path = flavor.path.clone();
             let engine = engine.clone();
-            let disabled = snapshot.wow_running;
+            let wow_running = snapshot.wow_running;
             body = body.child(
                 div()
                     .flex()
@@ -314,13 +314,8 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                                 Button::new(format!("update-addon-{}", flavor.dir_name))
                                     .small()
                                     .primary()
-                                    .disabled(disabled)
                                     .label(if installed.is_none() { "Install" } else { "Update" })
-                                    .tooltip(if disabled {
-                                        "Close WoW first"
-                                    } else {
-                                        "Install the latest addon release"
-                                    })
+                                    .tooltip("Install the latest addon release")
                                     .on_click(move |_, _, _| {
                                         engine.send(crate::state::Command::InstallAddon {
                                             flavor: flavor_path.clone(),
@@ -329,12 +324,11 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                                     .into_any_element()
                             }),
                     )
-                    .when(disabled && needs_update, |this| {
+                    .when(wow_running && needs_update, |this| {
                         this.child(
-                            div()
-                                .text_xs()
-                                .text_color(palette::warm_error())
-                                .child("WoW is running \u{2014} close it to update"),
+                            div().text_xs().text_color(palette::mist2()).child(
+                                "WoW is running \u{2014} type /reload in game after updating",
+                            ),
                         )
                     }),
             );

@@ -233,7 +233,7 @@ pub fn find_flavor_dirs(root: &Path) -> Vec<PathBuf> {
 /// Read the SideQuest addon's installed version from `<flavor>/Interface/AddOns/SideQuest/SideQuest.toc`'s
 /// `## Version:` line, if the addon is installed there.
 pub fn find_addon(flavor_dir: &Path) -> InstalledAddon {
-    let addon_dir = flavor_dir.join("Interface/AddOns/SideQuest");
+    let addon_dir = flavor_dir.join("Interface").join("AddOns").join("SideQuest");
     let toc_path = addon_dir.join("SideQuest.toc");
     match std::fs::read_to_string(&toc_path) {
         Ok(text) => match read_toc_version(&text) {
@@ -260,13 +260,13 @@ fn read_toc_version(text: &str) -> Option<String> {
 /// Every `WTF/Account/<NAME>` folder under `flavor_dir` that has a `SavedVariables/SideQuest.lua` file.
 /// `disabled_accounts` holds SavedVariables paths the user switched off in Settings.
 pub fn find_accounts(flavor_dir: &Path, disabled_accounts: &[PathBuf]) -> Vec<Account> {
-    let accounts_dir = flavor_dir.join("WTF/Account");
+    let accounts_dir = flavor_dir.join("WTF").join("Account");
     let Ok(entries) = std::fs::read_dir(&accounts_dir) else { return Vec::new() };
     let mut accounts: Vec<Account> = entries
         .flatten()
         .filter(|e| e.path().is_dir())
         .filter_map(|e| {
-            let saved_variables = e.path().join("SavedVariables/SideQuest.lua");
+            let saved_variables = e.path().join("SavedVariables").join("SideQuest.lua");
             if !saved_variables.is_file() {
                 return None;
             }

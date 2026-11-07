@@ -719,7 +719,7 @@ impl Engine {
             };
         for install in &self.installs {
             for flavor in &install.flavors {
-                let accounts_dir = flavor.path.join("WTF/Account");
+                let accounts_dir = flavor.path.join("WTF").join("Account");
                 if accounts_dir.is_dir()
                     && let Err(err) = notify::Watcher::watch(
                         &mut watcher,
@@ -805,7 +805,14 @@ impl Engine {
                 .installs
                 .iter()
                 .flat_map(|i| &i.flavors)
-                .map(|f| f.path.join("WTF/Account/<name>/SavedVariables/SideQuest.lua"))
+                .map(|f| {
+                    f.path
+                        .join("WTF")
+                        .join("Account")
+                        .join("<name>")
+                        .join("SavedVariables")
+                        .join("SideQuest.lua")
+                })
                 .next();
             let where_ = match checked {
                 Some(path) => format!(" Companion checked {}.", path.display()),
@@ -1034,9 +1041,6 @@ impl Engine {
             }
             self.discover_installs();
         }
-        if just_closed && self.settings.auto_update_addon && self.settings.check_addon_updates {
-            self.auto_install_outdated_addons().await;
-        }
         self.publish();
     }
 
@@ -1053,7 +1057,7 @@ impl Engine {
                 };
                 self.last_addon_release = Some(release.clone());
                 self.publish();
-                if self.settings.auto_update_addon && !self.wow_running {
+                if self.settings.auto_update_addon {
                     self.auto_install_outdated_addons().await;
                 }
             }
@@ -1092,9 +1096,13 @@ impl Engine {
                     &format!("Installed addon {version}"),
                     None,
                 );
+                // WoW reads addon files only at login and /reload, so a running game keeps the old
+                // version until then.
+                let hint =
+                    if self.wow_running { " \u{2014} type /reload in game to load it" } else { "" };
                 self.push_notice(
                     NoticeLevel::Success,
-                    format!("Addon updated to {version} ({label})"),
+                    format!("Addon updated to {version} ({label}){hint}"),
                 );
             }
             Err(err) => {
@@ -1105,9 +1113,14 @@ impl Engine {
                     &err.to_string(),
                     None,
                 );
+                let hint = if self.wow_running {
+                    " \u{2014} if it keeps failing, close WoW and try again"
+                } else {
+                    ""
+                };
                 self.push_notice(
                     NoticeLevel::Error,
-                    format!("Addon install failed ({label}): {err}"),
+                    format!("Addon install failed ({label}): {err}{hint}"),
                 );
             }
         }
@@ -1455,7 +1468,8 @@ mod tests {
     }
 
     fn write_account(root: &Path, flavor: &str, account: &str, body: &str) -> PathBuf {
-        let sv_dir = root.join(flavor).join("WTF/Account").join(account).join("SavedVariables");
+        let sv_dir =
+            root.join(flavor).join("WTF").join("Account").join(account).join("SavedVariables");
         std::fs::create_dir_all(&sv_dir).unwrap();
         let path = sv_dir.join("SideQuest.lua");
         std::fs::write(&path, body).unwrap();
@@ -1482,7 +1496,8 @@ mod tests {
         engine.discover_installs();
         let message = engine.sync_nothing_new_message();
         assert!(message.starts_with("WoW hasn't saved SideQuest data yet."), "{message}");
-        assert!(message.contains("WTF/Account"), "{message}");
+        let accounts = Path::new("WTF").join("Account");
+        assert!(message.contains(&accounts.display().to_string()));
     }
 
     #[test]

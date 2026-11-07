@@ -28,7 +28,7 @@ pub struct Settings {
     /// After an upload, fetch the game import and stage it in SavedVariables while WoW is closed.
     pub stage_imports: bool,
     pub check_addon_updates: bool,
-    /// Install addon updates without asking (only while WoW is closed).
+    /// Install addon updates without asking, WoW running or not (a running game loads them on /reload).
     pub auto_update_addon: bool,
     pub check_app_updates: bool,
     /// Download and install a newer app version as soon as a check finds it, then restart into it.
