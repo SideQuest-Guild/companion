@@ -1034,9 +1034,6 @@ impl Engine {
             }
             self.discover_installs();
         }
-        if just_closed && self.settings.auto_update_addon && self.settings.check_addon_updates {
-            self.auto_install_outdated_addons().await;
-        }
         self.publish();
     }
 
@@ -1053,7 +1050,7 @@ impl Engine {
                 };
                 self.last_addon_release = Some(release.clone());
                 self.publish();
-                if self.settings.auto_update_addon && !self.wow_running {
+                if self.settings.auto_update_addon {
                     self.auto_install_outdated_addons().await;
                 }
             }
@@ -1092,9 +1089,13 @@ impl Engine {
                     &format!("Installed addon {version}"),
                     None,
                 );
+                // WoW reads addon files only at login and /reload, so a running game keeps the old
+                // version until then.
+                let hint =
+                    if self.wow_running { " \u{2014} type /reload in game to load it" } else { "" };
                 self.push_notice(
                     NoticeLevel::Success,
-                    format!("Addon updated to {version} ({label})"),
+                    format!("Addon updated to {version} ({label}){hint}"),
                 );
             }
             Err(err) => {
@@ -1105,9 +1106,14 @@ impl Engine {
                     &err.to_string(),
                     None,
                 );
+                let hint = if self.wow_running {
+                    " \u{2014} if it keeps failing, close WoW and try again"
+                } else {
+                    ""
+                };
                 self.push_notice(
                     NoticeLevel::Error,
-                    format!("Addon install failed ({label}): {err}"),
+                    format!("Addon install failed ({label}): {err}{hint}"),
                 );
             }
         }

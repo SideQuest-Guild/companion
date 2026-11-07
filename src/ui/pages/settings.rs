@@ -450,7 +450,7 @@ impl SettingsPage {
                 ))
                 .child(labeled_switch(
                     "auto-update-addon",
-                    "Install updates automatically while WoW is closed",
+                    "Install updates automatically",
                     self.draft.auto_update_addon,
                     cx.listener(|this, v, _, cx| {
                         this.draft.auto_update_addon = *v;

@@ -1,4 +1,3 @@
-use gpui_kit::base::Disableable as _;
 use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
@@ -154,22 +153,14 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                     .justify_between()
                     .mt(px(2.))
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(palette::mist2())
-                            .child(flavor.dir_name.clone()),
+                        div().text_xs().text_color(palette::mist2()).child(flavor.dir_name.clone()),
                     )
                     .child(if needs_action {
                         Button::new(format!("addon-install-{}", flavor.dir_name))
                             .primary()
                             .small()
-                            .disabled(snapshot.wow_running)
                             .label("Install update")
-                            .tooltip(if snapshot.wow_running {
-                                "Close WoW first \u{2014} the addon folder can't be replaced while it's running"
-                            } else {
-                                "Install the latest signed release from GitHub"
-                            })
+                            .tooltip("Install the latest signed release from GitHub")
                             .on_click(move |_, _, _| {
                                 engine.send(crate::state::Command::InstallAddon {
                                     flavor: flavor_path.clone(),
@@ -181,12 +172,9 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                     }),
             )
             .when(snapshot.wow_running && needs_action, |d| {
-                d.child(
-                    div()
-                        .text_xs()
-                        .text_color(palette::warm_error())
-                        .child("Close WoW first \u{2014} the addon folder can't be replaced while it's running"),
-                )
+                d.child(div().text_xs().text_color(palette::mist2()).child(
+                    "WoW is running \u{2014} type /reload in game after the update to load it",
+                ))
             });
 
             cards = cards.child(
