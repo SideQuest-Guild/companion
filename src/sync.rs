@@ -1497,7 +1497,7 @@ mod tests {
         let message = engine.sync_nothing_new_message();
         assert!(message.starts_with("WoW hasn't saved SideQuest data yet."), "{message}");
         let accounts = Path::new("WTF").join("Account");
-        assert!(message.contains(&accounts.display().to_string()), "{message}");
+        assert!(message.contains(&accounts.display().to_string()));
     }
 
     #[test]
