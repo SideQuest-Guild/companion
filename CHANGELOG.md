@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.3 (2026-11-07)
+
+### Fixed
+
+- The addon updates while WoW is running, and /reload loads it
+- Save-file paths show with Windows backslashes throughout
 ## v0.4.2 (2026-11-06)
 
 ### Fixed
