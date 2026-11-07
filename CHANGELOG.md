@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.5.0 (2026-11-07)
+
+### New
+
+- Addon updates install on their own by default, checked hourly, and the game tells you to /reload
 ## v0.4.3 (2026-11-07)
 
 ### Fixed

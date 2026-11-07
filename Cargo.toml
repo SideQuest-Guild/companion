@@ -1,6 +1,6 @@
 [package]
 name = "sidequest-companion"
-version = "0.4.3"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 description = "SideQuest Companion: syncs the SideQuest WoW addon with sidequest-guild.com from your system tray"
