@@ -719,7 +719,7 @@ impl Engine {
             };
         for install in &self.installs {
             for flavor in &install.flavors {
-                let accounts_dir = flavor.path.join("WTF/Account");
+                let accounts_dir = flavor.path.join("WTF").join("Account");
                 if accounts_dir.is_dir()
                     && let Err(err) = notify::Watcher::watch(
                         &mut watcher,
@@ -805,7 +805,14 @@ impl Engine {
                 .installs
                 .iter()
                 .flat_map(|i| &i.flavors)
-                .map(|f| f.path.join("WTF/Account/<name>/SavedVariables/SideQuest.lua"))
+                .map(|f| {
+                    f.path
+                        .join("WTF")
+                        .join("Account")
+                        .join("<name>")
+                        .join("SavedVariables")
+                        .join("SideQuest.lua")
+                })
                 .next();
             let where_ = match checked {
                 Some(path) => format!(" Companion checked {}.", path.display()),
@@ -1461,7 +1468,8 @@ mod tests {
     }
 
     fn write_account(root: &Path, flavor: &str, account: &str, body: &str) -> PathBuf {
-        let sv_dir = root.join(flavor).join("WTF/Account").join(account).join("SavedVariables");
+        let sv_dir =
+            root.join(flavor).join("WTF").join("Account").join(account).join("SavedVariables");
         std::fs::create_dir_all(&sv_dir).unwrap();
         let path = sv_dir.join("SideQuest.lua");
         std::fs::write(&path, body).unwrap();
@@ -1488,7 +1496,8 @@ mod tests {
         engine.discover_installs();
         let message = engine.sync_nothing_new_message();
         assert!(message.starts_with("WoW hasn't saved SideQuest data yet."), "{message}");
-        assert!(message.contains("WTF/Account"), "{message}");
+        let accounts = Path::new("WTF").join("Account");
+        assert!(message.contains(&accounts.display().to_string()), "{message}");
     }
 
     #[test]
