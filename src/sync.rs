@@ -22,7 +22,7 @@ use crate::ui::format::ago;
 use crate::{addon_install, config, history, notifications, reminders, secrets, self_update, wow};
 
 const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
-const ADDON_RELEASE_INTERVAL: Duration = Duration::from_secs(6 * 3600);
+const ADDON_RELEASE_INTERVAL: Duration = Duration::from_secs(3600);
 const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 const EVENTS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMINDER_TICK: Duration = Duration::from_secs(30);

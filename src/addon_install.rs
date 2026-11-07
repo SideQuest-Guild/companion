@@ -23,9 +23,50 @@ pub async fn install_latest(
         .find(|a| a.name.ends_with(".zip") && a.name != "SHA256SUMS.txt")
         .with_context(|| format!("release {} has no addon zip asset", release.tag))?;
     let bytes = crate::release::download_verified(client, release, &asset.name, &|_| {}).await?;
-    let addons_dir = flavor_dir.join("Interface").join("AddOns");
-    install_zip(&bytes, &addons_dir)?;
-    read_installed_version(&addons_dir)
+    install_and_mark(&bytes, &flavor_dir.join("Interface").join("AddOns"))
+}
+
+/// Install the zip, then leave the marker that tells a running copy of the version it replaced that an update is
+/// waiting (see [`leave_update_marker`]). Returns the installed `.toc` version.
+fn install_and_mark(bytes: &[u8], addons_dir: &Path) -> Result<String> {
+    let previous = read_installed_version(addons_dir).ok();
+    install_zip(bytes, addons_dir)?;
+    let installed = read_installed_version(addons_dir)?;
+    if let Some(previous) = previous.filter(|previous| *previous != installed)
+        && let Err(err) = leave_update_marker(addons_dir, &previous)
+    {
+        // The update itself worked; the game just won't say so before the next /reload.
+        tracing::warn!("could not leave the in-game update notice: {err:#}");
+    }
+    Ok(installed)
+}
+
+/// The game only reads addon files at login and /reload, and an addon can't read files, but it can ask whether a
+/// font loads. So the new install gets a copy of one of its fonts at `Media/Updates/<previous version>.ttf`: the
+/// still-running previous version looks for that name (Updates.lua) and tells the player to /reload. The new version
+/// looks for its own name, which isn't there.
+fn leave_update_marker(addons_dir: &Path, previous: &str) -> Result<()> {
+    let media = addons_dir.join("SideQuest").join("Media");
+    let font = std::fs::read_dir(media.join("Fonts"))
+        .context("reading the addon's fonts")?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("ttf")))
+        .context("the addon has no font to copy")?;
+    let updates = media.join("Updates");
+    std::fs::create_dir_all(&updates).with_context(|| format!("creating {}", updates.display()))?;
+    let marker = updates.join(format!("{}.ttf", marker_name(previous)));
+    std::fs::copy(&font, &marker).with_context(|| format!("writing {}", marker.display()))?;
+    Ok(())
+}
+
+/// A version as a file name, the same way Updates.lua builds it: anything but ASCII letters, digits, dots, dashes
+/// and underscores becomes an underscore.
+fn marker_name(version: &str) -> String {
+    version
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect()
 }
 
 /// Extract an addon zip (root folder `SideQuest/` containing `SideQuest.toc`) into `addons_dir`.
@@ -146,6 +187,44 @@ mod tests {
         install_zip(&zip, dir.path()).unwrap();
         assert!(dir.path().join("SideQuest/Core.lua").exists());
         assert_eq!(read_installed_version(dir.path()).unwrap(), "v0.4.1");
+    }
+
+    fn release_zip(version: &str) -> Vec<u8> {
+        let toc = format!("## Interface: 16001\n## Version: {version}\n## Title: SideQuest\n");
+        build_zip(&[
+            ("SideQuest/SideQuest.toc", toc.as_bytes()),
+            ("SideQuest/Media/Fonts/Body.ttf", b"font bytes"),
+        ])
+    }
+
+    #[test]
+    fn updating_leaves_a_marker_named_for_the_version_it_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        install_and_mark(&release_zip("v0.10.1"), dir.path()).unwrap();
+        let updates = dir.path().join("SideQuest").join("Media").join("Updates");
+        assert!(!updates.exists(), "a first install has nothing running to tell");
+
+        assert_eq!(install_and_mark(&release_zip("v0.10.2"), dir.path()).unwrap(), "v0.10.2");
+        let marker = updates.join("v0.10.1.ttf");
+        assert_eq!(
+            std::fs::read(&marker).unwrap(),
+            b"font bytes",
+            "a loadable font, not an empty file"
+        );
+        assert!(!updates.join("v0.10.2.ttf").exists(), "nothing for the version now installed");
+    }
+
+    #[test]
+    fn reinstalling_the_same_version_leaves_no_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        install_and_mark(&release_zip("v0.10.1"), dir.path()).unwrap();
+        install_and_mark(&release_zip("v0.10.1"), dir.path()).unwrap();
+        assert!(!dir.path().join("SideQuest").join("Media").join("Updates").exists());
+    }
+
+    #[test]
+    fn marker_names_match_the_addons() {
+        assert_eq!(marker_name("v1.2.3-beta 1"), "v1.2.3-beta_1");
     }
 
     #[test]

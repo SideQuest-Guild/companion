@@ -28,7 +28,9 @@ pub struct Settings {
     /// After an upload, fetch the game import and stage it in SavedVariables while WoW is closed.
     pub stage_imports: bool,
     pub check_addon_updates: bool,
-    /// Install addon updates without asking, WoW running or not (a running game loads them on /reload).
+    /// Install addon updates without asking, WoW running or not (a running game loads them on /reload). On by
+    /// default. Saved under a new key so installs that saved the old default (off) start with it on.
+    #[serde(rename = "auto_install_addon")]
     pub auto_update_addon: bool,
     pub check_app_updates: bool,
     /// Download and install a newer app version as soon as a check finds it, then restart into it.
@@ -58,7 +60,7 @@ impl Default for Settings {
             auto_sync: true,
             stage_imports: true,
             check_addon_updates: true,
-            auto_update_addon: false,
+            auto_update_addon: true,
             check_app_updates: true,
             auto_update_app: true,
             reminders: ReminderSettings::default(),
