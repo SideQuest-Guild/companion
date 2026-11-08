@@ -22,10 +22,15 @@ use crate::ui::format::ago;
 use crate::{addon_install, config, history, notifications, reminders, secrets, self_update, wow};
 
 const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
+/// How often the addon's releases are checked while WoW is closed.
 const ADDON_RELEASE_INTERVAL: Duration = Duration::from_secs(3600);
+/// How often they're checked while WoW is running, so a fix reaches a session in progress quickly.
+const ADDON_RELEASE_INTERVAL_WOW: Duration = Duration::from_secs(15 * 60);
+/// Room for timer jitter, so a check due on a tick isn't pushed to the next one.
+const ADDON_RELEASE_SLACK: Duration = Duration::from_secs(60);
 /// How many addon releases the version picker offers.
 const ADDON_RELEASE_LIST_LIMIT: u32 = 20;
-const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 3600);
+const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(3600);
 const EVENTS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMINDER_TICK: Duration = Duration::from_secs(30);
 const WOW_POLL_INTERVAL: Duration = Duration::from_secs(10);
@@ -60,7 +65,7 @@ pub async fn run(
     engine.bootstrap().await;
 
     let mut rescan_interval = tokio::time::interval(RESCAN_INTERVAL);
-    let mut addon_release_interval = tokio::time::interval(ADDON_RELEASE_INTERVAL);
+    let mut addon_release_interval = tokio::time::interval(ADDON_RELEASE_INTERVAL_WOW);
     let mut app_update_interval = tokio::time::interval(APP_UPDATE_INTERVAL);
     let mut events_interval = tokio::time::interval(EVENTS_INTERVAL);
     let mut reminder_interval = tokio::time::interval(REMINDER_TICK);
@@ -84,7 +89,13 @@ pub async fn run(
                 engine.rescan_and_sync(false).await;
             }
             _ = rescan_interval.tick() => { engine.rescan_and_sync(false).await; }
-            _ = addon_release_interval.tick() => { if engine.settings.check_addon_updates { engine.check_addon_release().await; } }
+            _ = addon_release_interval.tick() => {
+                if engine.settings.check_addon_updates
+                    && addon_release_due(engine.last_addon_check.map(|at| at.elapsed()), engine.wow_running)
+                {
+                    engine.check_addon_release().await;
+                }
+            }
             _ = app_update_interval.tick() => { if engine.settings.check_app_updates { engine.check_app_update().await; } }
             _ = events_interval.tick() => { engine.refresh_events().await; }
             _ = reminder_interval.tick() => { engine.reminder_tick().await; }
@@ -99,6 +110,13 @@ pub async fn run(
         }
     }
     engine.flush();
+}
+
+/// Whether the scheduled addon release check should run, given the time since the last check (`None`
+/// if never): every 15 minutes while WoW is running, otherwise once an hour.
+fn addon_release_due(since_last: Option<Duration>, wow_running: bool) -> bool {
+    let interval = if wow_running { ADDON_RELEASE_INTERVAL_WOW } else { ADDON_RELEASE_INTERVAL };
+    since_last.is_none_or(|elapsed| elapsed + ADDON_RELEASE_SLACK >= interval)
 }
 
 async fn recv_optional(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<()>>) -> Option<()> {
@@ -158,6 +176,8 @@ struct Engine {
 
     addon_release: crate::state::ReleaseCheck,
     last_addon_releases: Vec<release::GithubRelease>,
+    /// When the addon's releases were last checked, by schedule or by hand.
+    last_addon_check: Option<tokio::time::Instant>,
     app_update: crate::state::AppUpdate,
     last_app_release: Option<release::GithubRelease>,
     events: EventsState,
@@ -210,6 +230,7 @@ impl Engine {
             wow_running: false,
             addon_release: crate::state::ReleaseCheck::NotChecked,
             last_addon_releases: Vec::new(),
+            last_addon_check: None,
             app_update: crate::state::AppUpdate::NotChecked,
             last_app_release: None,
             events: EventsState::default(),
@@ -1072,6 +1093,7 @@ impl Engine {
     // --- Addon / app updates -------------------------------------------------------------------------------------
 
     async fn check_addon_release(&mut self) {
+        self.last_addon_check = Some(tokio::time::Instant::now());
         self.addon_release = crate::state::ReleaseCheck::Checking;
         self.publish();
         match release::list(&self.client, release::ADDON_REPO, ADDON_RELEASE_LIST_LIMIT).await {
@@ -1471,6 +1493,20 @@ fn backoff_delay(failures: u32) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn addon_release_checks_every_15_minutes_with_wow_running_and_hourly_otherwise() {
+        let mins = |m: u64| Some(Duration::from_secs(m * 60));
+        assert!(addon_release_due(None, false), "never checked");
+        // Ticks land a little early or late; a 15-minute tick must still count.
+        assert!(addon_release_due(mins(15), true));
+        assert!(addon_release_due(Some(Duration::from_secs(14 * 60 + 30)), true));
+        assert!(!addon_release_due(mins(5), true), "a manual check just ran");
+        assert!(!addon_release_due(mins(15), false));
+        assert!(!addon_release_due(mins(45), false));
+        assert!(addon_release_due(mins(60), false));
+        assert!(addon_release_due(Some(Duration::from_secs(59 * 60 + 30)), false));
+    }
 
     #[test]
     fn backoff_delay_doubles_and_caps() {

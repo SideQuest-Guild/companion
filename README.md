@@ -55,19 +55,20 @@ To sign out, use **Sign out** in **Settings**, or revoke the companion on your
 
 Every member gets:
 
-- **Addon updates:** the companion checks the addon's GitHub releases every hour against the version installed in your
-  `AddOns` folder and installs a new one on its own, the same zip CurseForge serves, checked against the release's
-  `SHA256SUMS.txt` first. Switch off **Install updates automatically** in Settings to install them in a click instead.
+- **Addon updates:** the companion checks the addon's GitHub releases every hour, and every 15 minutes while WoW is
+  running, against the version installed in your `AddOns` folder and installs a new one on its own, the same zip
+  CurseForge serves, checked against the release's `SHA256SUMS.txt` first. Switch off **Install updates
+  automatically** in Settings to install them in a click instead.
   WoW doesn't have to be closed: like CurseForge, it swaps the files in place, and the addon pops up a notice in game
   to `/reload`, which loads the new version. **Check for updates** on the Overview and Addon tabs checks right away
-  instead of waiting for the hourly check. Click the chevron beside a flavor's installed version to pick from its
+  instead of waiting for the next scheduled check. Click the chevron beside a flavor's installed version to pick from its
   released versions (drafts and prereleases aren't offered) and install that one instead of the latest -- handy for
   rolling back a release with a bug. Installing anything older than the latest pins it: the companion leaves that
   flavor alone until you install the latest again (the dropdown's "(latest)" entry, or **Back to latest** next to the
   "Pinned to vX" notice that replaces the update button while pinned), which also turns auto-update back on.
 - **Event reminders:** a notification before guild events you're signed up for (or every event, your choice), for
   the kinds you pick (raids, dungeons, world bosses, socials and more), from your own calendar on the site.
-- **App updates:** the companion checks its own releases twice a day and, unless you switch off **Install app updates
+- **App updates:** the companion checks its own releases every hour and, unless you switch off **Install app updates
   automatically** in Settings, installs a new version on its own after checking it the same way, then restarts into
   it. With the switch off it tells you a new version is out and installs it in a click.
 
