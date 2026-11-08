@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.0 (2026-11-08)
+
+### New
+
+- Check for updates and a version picker to roll the addon back, and save files with non-UTF-8 text sync again
 ## v0.5.0 (2026-11-07)
 
 ### New
