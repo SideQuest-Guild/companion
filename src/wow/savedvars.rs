@@ -97,6 +97,23 @@ pub fn parse_document(text: &str) -> Result<HashMap<String, LuaValue>> {
     Ok(doc)
 }
 
+/// Read a `SavedVariables` file as text, replacing any bytes that aren't valid UTF-8. WoW writes strings
+/// byte-for-byte (an addon that cuts a name or note mid-character leaves half a UTF-8 sequence), and
+/// `read_to_string` would reject the whole file over one such byte, hiding the export and the pending counts.
+/// Everything the companion reads from the file (`SQX1:`, numbers, keys) is ASCII, so nothing it needs is lost.
+pub fn read_text(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
+    })
+}
+
+/// Why `text` can't be parsed as a whole, if it can't (`extract` still salvages the export then).
+pub fn parse_problem(text: &str) -> Option<String> {
+    parse_document(text).err().map(|err| err.to_string())
+}
+
 /// What the engine needs out of a `SideQuestDB` table.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ParsedSavedVariables {
@@ -519,25 +536,34 @@ fn has_top_level_table(text: &str, name: &str) -> bool {
 
 /// Replace the `begin..end` marker block (inclusive) with `block`, or append `block` at the end of the file if no
 /// such block exists yet. Idempotent: calling this twice with a different `block` leaves only the latest one.
-fn replace_or_append_block(original: &str, begin: &str, end: &str, block: &str) -> String {
-    if let Some(start_idx) = original.find(begin)
-        && let Some(end_rel) = original[start_idx..].find(end)
+/// Works on bytes so a file with non-UTF-8 bytes elsewhere is written back exactly as it was apart from the block.
+fn replace_or_append_block(original: &[u8], begin: &str, end: &str, block: &str) -> Vec<u8> {
+    let (begin, end) = (begin.as_bytes(), end.as_bytes());
+    if let Some(start_idx) = find_bytes(original, begin)
+        && let Some(end_rel) = find_bytes(&original[start_idx..], end)
     {
         let end_idx = start_idx + end_rel + end.len();
-        let tail_start = if original[end_idx..].starts_with('\n') { end_idx + 1 } else { end_idx };
-        let mut result = String::with_capacity(original.len() + block.len());
-        result.push_str(&original[..start_idx]);
-        result.push_str(block);
-        result.push_str(&original[tail_start..]);
+        let tail_start = if original[end_idx..].starts_with(b"\n") { end_idx + 1 } else { end_idx };
+        let mut result = Vec::with_capacity(original.len() + block.len());
+        result.extend_from_slice(&original[..start_idx]);
+        result.extend_from_slice(block.as_bytes());
+        result.extend_from_slice(&original[tail_start..]);
         return result;
     }
-    let mut result = original.to_owned();
-    if !result.ends_with('\n') {
-        result.push('\n');
+    let mut result = original.to_vec();
+    if !result.ends_with(b"\n") {
+        result.push(b'\n');
     }
-    result.push('\n');
-    result.push_str(block);
+    result.push(b'\n');
+    result.extend_from_slice(block.as_bytes());
     result
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 /// Stage an `SQI1:` game import into a `SideQuest.lua` file per contract 7: refuses if the file has no top-level
@@ -551,15 +577,16 @@ pub fn stage_inbox(
     generated_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Result<()> {
-    let original =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    if !has_top_level_table(&original, "SideQuestDB") {
+    let original = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = String::from_utf8_lossy(&original);
+    let original_text: &str = &text;
+    if !has_top_level_table(original_text, "SideQuestDB") {
         bail!(
             "refusing to stage an import: {} has no top-level 'SideQuestDB = {{' table",
             path.display()
         );
     }
-    if let Some(standings_at) = extract(&original).standings_generated_at
+    if let Some(standings_at) = extract(original_text).standings_generated_at
         && generated_at < standings_at
     {
         bail!(
@@ -578,7 +605,7 @@ pub fn stage_inbox(
     std::fs::write(&backup_path, &original)
         .with_context(|| format!("writing backup {}", backup_path.display()))?;
 
-    atomic_write(path, replaced.as_bytes())
+    atomic_write(path, &replaced)
 }
 
 fn backup_path_for(path: &Path) -> std::path::PathBuf {
@@ -749,6 +776,42 @@ Foo["a"] = 99
         assert_eq!(text.matches(INBOX_BEGIN).count(), 1);
         assert!(!text.contains("SQI1:first"));
         assert!(text.contains("SQI1:second"));
+    }
+
+    /// A note cut mid-character by the addon leaves bytes that aren't UTF-8; the export must still be found and
+    /// staging must write those bytes back untouched.
+    const NON_UTF8_SAVE: &[u8] = b"SideQuestDB = {\n  [\"note\"] = \"caf\xc3\",\n  [\"lastExport\"] = \"SQX1:QUJD\",\n  [\"pending\"] = { [\"loot\"] = { [1] = {} } },\n  [\"standings\"] = { [\"generated_at\"] = 100 },\n}\n";
+
+    #[test]
+    fn a_save_with_non_utf8_bytes_still_yields_its_export_and_counts() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("SideQuest.lua");
+        std::fs::write(&path, NON_UTF8_SAVE).unwrap();
+
+        let text = read_text(&path).unwrap();
+        let parsed = extract(&text);
+        assert_eq!(parsed.last_export.as_deref(), Some("SQX1:QUJD"));
+        assert_eq!(parsed.pending.map(|p| p.loot), Some(1));
+        assert_eq!(parse_problem(&text), None);
+    }
+
+    #[test]
+    fn stage_inbox_keeps_non_utf8_bytes_elsewhere_in_the_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("SideQuest.lua");
+        std::fs::write(&path, NON_UTF8_SAVE).unwrap();
+
+        stage_inbox(
+            &path,
+            "SQI1:abc",
+            Utc.timestamp_opt(200, 0).unwrap(),
+            Utc.timestamp_opt(300, 0).unwrap(),
+        )
+        .unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(NON_UTF8_SAVE), "the original bytes are kept as they were");
+        assert!(extract(&read_text(&path).unwrap()).inbox_staged);
     }
 
     #[test]

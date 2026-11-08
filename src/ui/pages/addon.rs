@@ -8,7 +8,8 @@ use gpui_kit::{Div, IntoElement, ParentElement as _, SharedString, Styled as _, 
 
 use crate::engine::EngineHandle;
 use crate::release::{self, VersionStatus};
-use crate::state::{InstalledAddon, ReleaseCheck, Snapshot};
+use crate::state::{Command, InstalledAddon, ReleaseCheck, Snapshot};
+use crate::ui::addon_widgets;
 use crate::ui::format::ago;
 use crate::ui::theme::palette;
 use crate::ui::widgets::{Tone, chamber_with, empty_state, item_tooltip, state_tag};
@@ -23,10 +24,16 @@ pub fn render(snapshot: &Snapshot, engine: &EngineHandle) -> impl IntoElement {
         .child(flavors_chamber(snapshot, engine))
 }
 
-fn release_chamber(snapshot: &Snapshot, _engine: &EngineHandle) -> Div {
+fn release_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
+    let checking = matches!(snapshot.addon_release, ReleaseCheck::Checking);
+    let header = div().flex().justify_end().child(addon_widgets::check_updates_button(
+        "check-addon-updates",
+        engine.clone(),
+        checking,
+    ));
     let body = match &snapshot.addon_release {
         ReleaseCheck::NotChecked => {
-            empty_state("Checking for the latest addon release\u{2026}").into_any_element()
+            empty_state("Check for the latest addon release above.").into_any_element()
         }
         ReleaseCheck::Checking => {
             empty_state("Checking GitHub for the latest release\u{2026}").into_any_element()
@@ -83,7 +90,7 @@ fn release_chamber(snapshot: &Snapshot, _engine: &EngineHandle) -> Div {
             )
             .into_any_element(),
     };
-    chamber_with("Latest Release", body)
+    chamber_with("Latest Release", div().flex().flex_col().gap_3().child(header).child(body))
 }
 
 fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
@@ -107,12 +114,17 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
 
     let mut cards = div().flex().flex_col().gap_3();
     let mut any = false;
+    let pin = snapshot.settings.addon_pinned_version.clone();
     for install in &snapshot.installs {
         for flavor in &install.flavors {
             any = true;
-            let (installed_label, status) = match &flavor.addon {
-                InstalledAddon::Missing => ("not installed".to_owned(), None),
-                InstalledAddon::Installed { version, .. } => {
+            let installed_version = match &flavor.addon {
+                InstalledAddon::Missing => None,
+                InstalledAddon::Installed { version, .. } => Some(version.clone()),
+            };
+            let (installed_label, status) = match &installed_version {
+                None => ("not installed".to_owned(), None),
+                Some(version) => {
                     let status = latest_version.as_deref().map(|l| release::compare(version, l));
                     (format!("v{version}"), status)
                 }
@@ -129,10 +141,44 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
             };
             let needs_action = matches!(flavor.addon, InstalledAddon::Missing)
                 || matches!(status, Some(VersionStatus::Outdated));
+            let pinned_and_outdated =
+                pin.is_some() && matches!(status, Some(VersionStatus::Outdated));
             let latest_label = latest_version
                 .as_deref()
                 .map(|v| format!("v{v}"))
                 .unwrap_or_else(|| "unknown".to_owned());
+
+            let version_menu = addon_widgets::version_dropdown(
+                format!("addon-version-menu-{}", flavor.dir_name),
+                flavor.path.clone(),
+                &snapshot.addon_releases,
+                installed_version.as_deref(),
+                engine.clone(),
+            );
+            let action = if pinned_and_outdated {
+                addon_widgets::pinned_notice(
+                    format!("addon-back-to-latest-{}", flavor.dir_name),
+                    pin.as_deref().unwrap_or_default(),
+                    flavor_path.clone(),
+                    engine.clone(),
+                )
+                .into_any_element()
+            } else if needs_action {
+                Button::new(format!("addon-install-{}", flavor.dir_name))
+                    .primary()
+                    .small()
+                    .label("Install update")
+                    .tooltip("Install the latest signed release from GitHub")
+                    .on_click(move |_, _, _| {
+                        engine.send(Command::InstallAddon {
+                            flavor: flavor_path.clone(),
+                            version: None,
+                        })
+                    })
+                    .into_any_element()
+            } else {
+                state_tag(pill_label, pill_tone).into_any_element()
+            };
 
             let card = item_tooltip(
                 "SideQuest Guild",
@@ -153,23 +199,19 @@ fn flavors_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                     .justify_between()
                     .mt(px(2.))
                     .child(
-                        div().text_xs().text_color(palette::mist2()).child(flavor.dir_name.clone()),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(palette::mist2())
+                                    .child(flavor.dir_name.clone()),
+                            )
+                            .children(version_menu),
                     )
-                    .child(if needs_action {
-                        Button::new(format!("addon-install-{}", flavor.dir_name))
-                            .primary()
-                            .small()
-                            .label("Install update")
-                            .tooltip("Install the latest signed release from GitHub")
-                            .on_click(move |_, _, _| {
-                                engine.send(crate::state::Command::InstallAddon {
-                                    flavor: flavor_path.clone(),
-                                })
-                            })
-                            .into_any_element()
-                    } else {
-                        state_tag(pill_label, pill_tone).into_any_element()
-                    }),
+                    .child(action),
             )
             .when(snapshot.wow_running && needs_action, |d| {
                 d.child(div().text_xs().text_color(palette::mist2()).child(

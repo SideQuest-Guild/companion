@@ -32,6 +32,9 @@ pub struct Settings {
     /// default. Saved under a new key so installs that saved the old default (off) start with it on.
     #[serde(rename = "auto_install_addon")]
     pub auto_update_addon: bool,
+    /// A rollback release's version, installed instead of the latest on purpose (e.g. the latest had a bug).
+    /// While set, auto-update skips every flavor until the user installs the latest again, which clears it.
+    pub addon_pinned_version: Option<String>,
     pub check_app_updates: bool,
     /// Download and install a newer app version as soon as a check finds it, then restart into it.
     pub auto_update_app: bool,
@@ -61,6 +64,7 @@ impl Default for Settings {
             stage_imports: true,
             check_addon_updates: true,
             auto_update_addon: true,
+            addon_pinned_version: None,
             check_app_updates: true,
             auto_update_app: true,
             reminders: ReminderSettings::default(),
@@ -124,6 +128,9 @@ pub struct Snapshot {
     /// Newest first, capped (the engine keeps the last 500).
     pub history: Vec<HistoryEntry>,
     pub addon_release: ReleaseCheck,
+    /// Released addon versions, newest first, with drafts and prereleases dropped. Populated by the same
+    /// request `addon_release`'s `Known` latest comes from.
+    pub addon_releases: Vec<Release>,
     pub app_update: AppUpdate,
     pub events: EventsState,
     pub wow_running: bool,
@@ -269,6 +276,8 @@ pub struct Account {
     pub inbox_staged: bool,
     /// When the addon's standings were generated (`SideQuestDB.standings.generated_at`).
     pub standings_generated_at: Option<DateTime<Utc>>,
+    /// Why the save file couldn't be read or parsed, shown instead of the pending counts.
+    pub read_problem: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -415,9 +424,11 @@ pub enum Command {
     TestConnection,
     Rescan,
     CheckAddonRelease,
-    /// Install the latest addon release into this flavor folder.
+    /// Install an addon release into this flavor folder. `version` picks a specific release (installing it
+    /// pins it, pausing auto-update until the latest is installed again); `None` installs the latest.
     InstallAddon {
         flavor: PathBuf,
+        version: Option<String>,
     },
     /// Fetch the game import and stage it into this SavedVariables file now (WoW must be closed).
     StageImport {

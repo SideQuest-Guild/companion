@@ -23,6 +23,8 @@ use crate::{addon_install, config, history, notifications, reminders, secrets, s
 
 const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
 const ADDON_RELEASE_INTERVAL: Duration = Duration::from_secs(3600);
+/// How many addon releases the version picker offers.
+const ADDON_RELEASE_LIST_LIMIT: u32 = 20;
 const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 const EVENTS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMINDER_TICK: Duration = Duration::from_secs(30);
@@ -155,7 +157,7 @@ struct Engine {
     wow_running: bool,
 
     addon_release: crate::state::ReleaseCheck,
-    last_addon_release: Option<release::GithubRelease>,
+    last_addon_releases: Vec<release::GithubRelease>,
     app_update: crate::state::AppUpdate,
     last_app_release: Option<release::GithubRelease>,
     events: EventsState,
@@ -207,7 +209,7 @@ impl Engine {
             installs: Vec::new(),
             wow_running: false,
             addon_release: crate::state::ReleaseCheck::NotChecked,
-            last_addon_release: None,
+            last_addon_releases: Vec::new(),
             app_update: crate::state::AppUpdate::NotChecked,
             last_app_release: None,
             events: EventsState::default(),
@@ -283,7 +285,9 @@ impl Engine {
             Command::TestConnection => self.test_connection().await,
             Command::Rescan => self.rescan_and_sync(false).await,
             Command::CheckAddonRelease => self.check_addon_release().await,
-            Command::InstallAddon { flavor } => self.handle_install_addon_command(flavor).await,
+            Command::InstallAddon { flavor, version } => {
+                self.handle_install_addon_command(flavor, version).await
+            }
             Command::StageImport { saved_variables } => {
                 self.handle_stage_import_command(saved_variables).await
             }
@@ -588,11 +592,10 @@ impl Engine {
         self.publish();
     }
 
-    async fn handle_install_addon_command(&mut self, flavor: PathBuf) {
-        let release = match self.last_addon_release.clone() {
-            Some(release) => release,
-            None => match release::latest(&self.client, release::ADDON_REPO).await {
-                Ok(release) => release,
+    async fn handle_install_addon_command(&mut self, flavor: PathBuf, version: Option<String>) {
+        if self.last_addon_releases.is_empty() {
+            match release::list(&self.client, release::ADDON_REPO, ADDON_RELEASE_LIST_LIMIT).await {
+                Ok(releases) => self.last_addon_releases = releases,
                 Err(err) => {
                     self.push_notice(
                         NoticeLevel::Error,
@@ -601,9 +604,31 @@ impl Engine {
                     self.publish();
                     return;
                 }
-            },
+            }
+        }
+        let Some((release, pin)) =
+            select_addon_install(&self.last_addon_releases, version.as_deref())
+        else {
+            self.push_notice(
+                NoticeLevel::Error,
+                "That addon release is no longer available.".to_owned(),
+            );
+            self.publish();
+            return;
         };
+        let release = release.clone();
+        self.set_addon_pin(pin);
         self.install_addon(&release, &flavor).await;
+    }
+
+    /// Persists a pinned addon version (or clears it), when it changed.
+    fn set_addon_pin(&mut self, pin: Option<String>) {
+        if self.settings.addon_pinned_version != pin {
+            self.settings.addon_pinned_version = pin;
+            if let Err(err) = config::save_settings(&self.settings) {
+                tracing::warn!("could not save settings after an addon pin change: {err:#}");
+            }
+        }
     }
 
     async fn handle_stage_import_command(&mut self, saved_variables: PathBuf) {
@@ -874,7 +899,7 @@ impl Engine {
                 !self.backoff.get(&account.saved_variables).is_some_and(|b| b.next_attempt_at > now)
             })
             .filter_map(|account| {
-                let text = std::fs::read_to_string(&account.saved_variables).ok()?;
+                let text = wow::savedvars::read_text(&account.saved_variables).ok()?;
                 let export = wow::savedvars::extract(&text).last_export?;
                 Some((account.saved_variables.clone(), account.name.clone(), export))
             })
@@ -1049,13 +1074,16 @@ impl Engine {
     async fn check_addon_release(&mut self) {
         self.addon_release = crate::state::ReleaseCheck::Checking;
         self.publish();
-        match release::latest(&self.client, release::ADDON_REPO).await {
-            Ok(release) => {
-                self.addon_release = crate::state::ReleaseCheck::Known {
-                    latest: release.to_state(),
-                    checked_at: Utc::now(),
+        match release::list(&self.client, release::ADDON_REPO, ADDON_RELEASE_LIST_LIMIT).await {
+            Ok(releases) => {
+                self.addon_release = match releases.first() {
+                    Some(latest) => crate::state::ReleaseCheck::Known {
+                        latest: latest.to_state(),
+                        checked_at: Utc::now(),
+                    },
+                    None => crate::state::ReleaseCheck::Failed("No addon releases found".into()),
                 };
-                self.last_addon_release = Some(release.clone());
+                self.last_addon_releases = releases;
                 self.publish();
                 if self.settings.auto_update_addon {
                     self.auto_install_outdated_addons().await;
@@ -1069,7 +1097,10 @@ impl Engine {
     }
 
     async fn auto_install_outdated_addons(&mut self) {
-        let Some(release) = self.last_addon_release.clone() else { return };
+        if self.settings.addon_pinned_version.is_some() {
+            return;
+        }
+        let Some(release) = self.last_addon_releases.first().cloned() else { return };
         let outdated_flavors: Vec<PathBuf> = self
             .installs
             .iter()
@@ -1308,6 +1339,7 @@ impl Engine {
             installs: self.installs.clone(),
             history: self.history.clone(),
             addon_release: self.addon_release.clone(),
+            addon_releases: self.last_addon_releases.iter().map(|r| r.to_state()).collect(),
             app_update: self.app_update.clone(),
             events: self.events.clone(),
             wow_running: self.wow_running,
@@ -1352,7 +1384,14 @@ fn open_in_browser(url: &str) {
 }
 
 fn enrich_account(account: &mut Account, sync_state: &config::SyncState) {
-    let Ok(text) = std::fs::read_to_string(&account.saved_variables) else { return };
+    let text = match wow::savedvars::read_text(&account.saved_variables) {
+        Ok(text) => text,
+        Err(err) => {
+            account.read_problem = Some(format!("{err:#}"));
+            return;
+        }
+    };
+    account.read_problem = wow::savedvars::parse_problem(&text);
     let parsed = wow::savedvars::extract(&text);
     account.pending = parsed.pending;
     account.inbox_staged = parsed.inbox_staged;
@@ -1407,6 +1446,20 @@ fn should_auto_update_app(
         && settings.auto_update_app
         && can_self_update
         && already_attempted != Some(latest)
+}
+
+/// Which release `version` (`None` = latest) picks out of `releases` (newest first) to install, and what the
+/// pin should become afterwards: `None` to clear it (installing the latest, by any path, always clears the
+/// pin), `Some` to set it (installing anything older pins that version so auto-update leaves it alone).
+fn select_addon_install<'a>(
+    releases: &'a [release::GithubRelease],
+    version: Option<&str>,
+) -> Option<(&'a release::GithubRelease, Option<String>)> {
+    let latest = releases.first()?;
+    let target = version.unwrap_or(latest.version.as_str());
+    let release = releases.iter().find(|r| r.version == target)?;
+    let pin = (release.version != latest.version).then(|| release.version.clone());
+    Some((release, pin))
 }
 
 fn backoff_delay(failures: u32) -> Duration {
@@ -1576,6 +1629,7 @@ mod tests {
                     export_uploaded: false,
                     inbox_staged: false,
                     standings_generated_at: None,
+                    read_problem: None,
                 }],
             }],
         }];
@@ -1663,5 +1717,150 @@ mod tests {
         assert_eq!(server.received_requests().await.unwrap().len(), 1, "Sync now retries");
         assert!(engine.notices.iter().any(|n| n.level == NoticeLevel::Error));
         assert!(!engine.notices.iter().any(|n| n.text == NOTHING_NEW_TO_SYNC));
+    }
+
+    fn addon_zip(version: &str) -> Vec<u8> {
+        use zip::write::SimpleFileOptions;
+        let toc = format!("## Interface: 110000\n## Version: {version}\n## Title: SideQuest\n");
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default();
+        writer.start_file("SideQuest/SideQuest.toc", options).unwrap();
+        std::io::Write::write_all(&mut writer, toc.as_bytes()).unwrap();
+        writer.finish().unwrap().into_inner()
+    }
+
+    /// A release whose asset zip and `SHA256SUMS.txt` are served by `server`, so
+    /// [`addon_install::install_latest`]'s checksum verification passes.
+    async fn mocked_release(
+        server: &wiremock::MockServer,
+        version: &str,
+    ) -> release::GithubRelease {
+        use sha2::{Digest, Sha256};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let zip = addon_zip(version);
+        let mut hasher = Sha256::new();
+        hasher.update(&zip);
+        let digest = hex::encode(hasher.finalize());
+        let zip_path = format!("/{version}/SideQuest.zip");
+        let sums_path = format!("/{version}/SHA256SUMS.txt");
+        Mock::given(method("GET"))
+            .and(path(&zip_path))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(zip))
+            .mount(server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(&sums_path))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(format!("{digest}  SideQuest.zip\n")),
+            )
+            .mount(server)
+            .await;
+        release::GithubRelease {
+            tag: format!("v{version}"),
+            version: version.to_owned(),
+            name: format!("v{version}"),
+            body: String::new(),
+            html_url: format!("https://github.com/SideQuest-Guild/addon/releases/tag/v{version}"),
+            published_at: None,
+            assets: vec![
+                release::Asset {
+                    name: "SideQuest.zip".into(),
+                    url: format!("{}{zip_path}", server.uri()),
+                    size: 0,
+                },
+                release::Asset {
+                    name: "SHA256SUMS.txt".into(),
+                    url: format!("{}{sums_path}", server.uri()),
+                    size: 0,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn select_addon_install_picks_version_and_sets_or_clears_the_pin() {
+        let releases: Vec<release::GithubRelease> = ["0.3.0", "0.2.0", "0.1.0"]
+            .iter()
+            .map(|v| release::GithubRelease {
+                tag: format!("v{v}"),
+                version: (*v).to_owned(),
+                name: String::new(),
+                body: String::new(),
+                html_url: String::new(),
+                published_at: None,
+                assets: Vec::new(),
+            })
+            .collect();
+
+        let (release, pin) = select_addon_install(&releases, None).unwrap();
+        assert_eq!(release.version, "0.3.0", "no version requested installs the latest");
+        assert_eq!(pin, None, "installing the latest clears any pin");
+
+        let (release, pin) = select_addon_install(&releases, Some("0.2.0")).unwrap();
+        assert_eq!(release.version, "0.2.0");
+        assert_eq!(pin, Some("0.2.0".to_owned()), "an older version pins itself");
+
+        let (release, pin) = select_addon_install(&releases, Some("0.3.0")).unwrap();
+        assert_eq!(release.version, "0.3.0");
+        assert_eq!(pin, None, "re-requesting the latest by its own version also clears the pin");
+
+        assert!(select_addon_install(&releases, Some("9.9.9")).is_none(), "unknown version");
+        assert!(select_addon_install(&[], None).is_none(), "nothing to install from");
+    }
+
+    #[tokio::test]
+    async fn installing_a_specific_version_installs_that_releases_zip() {
+        let server = wiremock::MockServer::start().await;
+        let older = mocked_release(&server, "0.2.0").await;
+
+        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+        let addons_dir = tempfile::tempdir().unwrap();
+        engine.install_addon(&older, addons_dir.path()).await;
+
+        let toc = addons_dir.path().join("Interface/AddOns/SideQuest/SideQuest.toc");
+        let text = std::fs::read_to_string(&toc).unwrap();
+        assert!(text.contains("0.2.0"), "installed the requested release's zip, not the latest");
+        assert!(
+            engine
+                .history
+                .iter()
+                .any(|h| h.outcome == Outcome::Success && h.summary == "Installed addon 0.2.0"),
+            "{:?}",
+            engine.history
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_install_outdated_addons_skips_while_pinned() {
+        let server = wiremock::MockServer::start().await;
+        let latest = mocked_release(&server, "0.2.0").await;
+
+        let root = tempfile::tempdir().unwrap();
+        let addon_dir = root.path().join("_forever_/Interface/AddOns/SideQuest");
+        std::fs::create_dir_all(&addon_dir).unwrap();
+        std::fs::write(
+            addon_dir.join("SideQuest.toc"),
+            "## Interface: 110000\n## Version: 0.1.0\n## Title: SideQuest\n",
+        )
+        .unwrap();
+
+        let mut engine =
+            test_engine("http://127.0.0.1:9".to_owned(), vec![root.path().to_path_buf()]);
+        engine.discover_installs();
+        engine.last_addon_releases = vec![latest];
+        engine.settings.addon_pinned_version = Some("0.1.0".to_owned());
+
+        engine.auto_install_outdated_addons().await;
+
+        let toc_text = std::fs::read_to_string(addon_dir.join("SideQuest.toc")).unwrap();
+        assert!(toc_text.contains("0.1.0"), "pinned install must not be touched by auto-update");
+        assert!(engine.history.is_empty(), "no install should have been attempted");
+
+        engine.settings.addon_pinned_version = None;
+        engine.auto_install_outdated_addons().await;
+        let toc_text = std::fs::read_to_string(addon_dir.join("SideQuest.toc")).unwrap();
+        assert!(toc_text.contains("0.2.0"), "unpinning lets auto-update resume");
     }
 }

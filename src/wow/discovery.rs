@@ -285,6 +285,7 @@ pub fn find_accounts(flavor_dir: &Path, disabled_accounts: &[PathBuf]) -> Vec<Ac
                 export_uploaded: false,
                 inbox_staged: false,
                 standings_generated_at: None,
+                read_problem: None,
             })
         })
         .collect();

@@ -60,6 +60,10 @@ struct GhRelease {
     html_url: String,
     published_at: Option<DateTime<Utc>>,
     assets: Vec<GhAsset>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,22 +80,9 @@ fn user_agent() -> String {
     )
 }
 
-/// Fetch the latest release of `repo` (e.g. [`ADDON_REPO`] or [`APP_REPO`]).
-pub async fn latest(client: &reqwest::Client, repo: &str) -> Result<GithubRelease> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
-    let resp = client
-        .get(&url)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .header(reqwest::header::USER_AGENT, user_agent())
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .send()
-        .await
-        .with_context(|| format!("requesting the latest release of {repo}"))?;
-    check_github_status(&resp, &format!("checking the latest release of {repo}"))?;
-    let body: GhRelease =
-        resp.json().await.with_context(|| format!("parsing the latest release of {repo}"))?;
+fn from_gh(body: GhRelease) -> GithubRelease {
     let version = body.tag_name.strip_prefix('v').unwrap_or(&body.tag_name).to_owned();
-    Ok(GithubRelease {
+    GithubRelease {
         tag: body.tag_name,
         version,
         name: body.name.unwrap_or_default(),
@@ -103,7 +94,56 @@ pub async fn latest(client: &reqwest::Client, repo: &str) -> Result<GithubReleas
             .into_iter()
             .map(|a| Asset { name: a.name, url: a.browser_download_url, size: a.size })
             .collect(),
-    })
+    }
+}
+
+fn gh_request(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
+    client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .header(reqwest::header::USER_AGENT, user_agent())
+        .header("X-GitHub-Api-Version", "2022-11-28")
+}
+
+/// Fetch the latest release of `repo` (e.g. [`ADDON_REPO`] or [`APP_REPO`]).
+pub async fn latest(client: &reqwest::Client, repo: &str) -> Result<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+    let resp = gh_request(client, &url)
+        .send()
+        .await
+        .with_context(|| format!("requesting the latest release of {repo}"))?;
+    check_github_status(&resp, &format!("checking the latest release of {repo}"))?;
+    let body: GhRelease =
+        resp.json().await.with_context(|| format!("parsing the latest release of {repo}"))?;
+    Ok(from_gh(body))
+}
+
+/// Fetch up to `limit` releases of `repo`, newest first by version (not GitHub's API order), with
+/// drafts and prereleases dropped. One request: used both to show a rollback picker and, for the
+/// addon, to find the latest release (its first entry) without any extra request.
+pub async fn list(client: &reqwest::Client, repo: &str, limit: u32) -> Result<Vec<GithubRelease>> {
+    let url = format!("https://api.github.com/repos/{repo}/releases?per_page={limit}");
+    let resp = gh_request(client, &url)
+        .send()
+        .await
+        .with_context(|| format!("requesting releases of {repo}"))?;
+    check_github_status(&resp, &format!("listing releases of {repo}"))?;
+    let body: Vec<GhRelease> =
+        resp.json().await.with_context(|| format!("parsing releases of {repo}"))?;
+    Ok(select_releases(body))
+}
+
+/// Drops drafts and prereleases, then sorts newest first by semver (not GitHub's API order, which
+/// is by creation time and can put a draft or backported point release out of place).
+fn select_releases(parsed: Vec<GhRelease>) -> Vec<GithubRelease> {
+    let mut releases: Vec<GithubRelease> =
+        parsed.into_iter().filter(|r| !r.draft && !r.prerelease).map(from_gh).collect();
+    releases.sort_by(|a, b| match (lenient_version(&a.version), lenient_version(&b.version)) {
+        (Some(va), Some(vb)) => vb.cmp(&va),
+        // Unparsable versions keep GitHub's own (already newest-first) relative order.
+        _ => Ordering::Equal,
+    });
+    releases
 }
 
 /// How an installed version compares to the latest release's.
@@ -427,5 +467,34 @@ mod tests {
         assert_eq!(compare("@project-version@", "1.2.0"), VersionStatus::Development);
         assert_eq!(compare("not-a-version", "1.2.0"), VersionStatus::Unknown);
         assert_eq!(compare("1.2", "1.2.0"), VersionStatus::UpToDate);
+    }
+
+    fn gh_release(tag: &str, draft: bool, prerelease: bool) -> GhRelease {
+        GhRelease {
+            tag_name: tag.to_owned(),
+            name: Some(tag.to_owned()),
+            body: None,
+            html_url: format!("https://github.com/SideQuest-Guild/addon/releases/tag/{tag}"),
+            published_at: None,
+            assets: Vec::new(),
+            draft,
+            prerelease,
+        }
+    }
+
+    #[test]
+    fn select_releases_drops_drafts_and_prereleases_and_sorts_newest_first() {
+        // Deliberately out of order and interleaved with a draft and a prerelease, the way
+        // GitHub's API might if it sorts by creation time rather than semver.
+        let parsed = vec![
+            gh_release("v1.0.0", false, false),
+            gh_release("v1.2.0", false, false),
+            gh_release("v2.0.0-draft", true, false),
+            gh_release("v1.1.0-rc.1", false, true),
+            gh_release("v1.1.0", false, false),
+        ];
+        let releases = select_releases(parsed);
+        let versions: Vec<&str> = releases.iter().map(|r| r.version.as_str()).collect();
+        assert_eq!(versions, vec!["1.2.0", "1.1.0", "1.0.0"]);
     }
 }

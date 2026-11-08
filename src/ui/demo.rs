@@ -76,6 +76,7 @@ pub fn snapshot() -> Snapshot {
             export_uploaded: false,
             inbox_staged: false,
             standings_generated_at: Some(now - Duration::hours(2)),
+            read_problem: None,
         },
         Account {
             name: "ALTACCOUNT".into(),
@@ -89,6 +90,7 @@ pub fn snapshot() -> Snapshot {
             export_uploaded: true,
             inbox_staged: true,
             standings_generated_at: Some(now - Duration::hours(26)),
+            read_problem: None,
         },
     ];
 
@@ -205,6 +207,31 @@ pub fn snapshot() -> Snapshot {
         },
         checked_at: now - Duration::minutes(5),
     };
+    // Newest first, as `release::list` returns them; the version picker's dropdown shows these.
+    let addon_releases = vec![
+        Release {
+            version: "0.3.0".into(),
+            tag: "v0.3.0".into(),
+            published_at: Some(now - Duration::days(3)),
+            notes: "- Adds profession tracking\n- Fixes loot history export for Vanilla realms"
+                .into(),
+            html_url: "https://github.com/SideQuest-Guild/addon/releases/tag/v0.3.0".into(),
+        },
+        Release {
+            version: "0.2.0".into(),
+            tag: "v0.2.0".into(),
+            published_at: Some(now - Duration::days(20)),
+            notes: "- Loot council standings panel".into(),
+            html_url: "https://github.com/SideQuest-Guild/addon/releases/tag/v0.2.0".into(),
+        },
+        Release {
+            version: "0.1.0".into(),
+            tag: "v0.1.0".into(),
+            published_at: Some(now - Duration::days(45)),
+            notes: "- First public release".into(),
+            html_url: "https://github.com/SideQuest-Guild/addon/releases/tag/v0.1.0".into(),
+        },
+    ];
 
     Snapshot {
         settings: Settings::default(),
@@ -225,6 +252,7 @@ pub fn snapshot() -> Snapshot {
         installs,
         history,
         addon_release,
+        addon_releases,
         app_update: AppUpdate::UpToDate { checked_at: now - Duration::hours(1) },
         events,
         wow_running: false,

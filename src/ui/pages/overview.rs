@@ -12,6 +12,7 @@ use crate::state::{
     Account, Command, Flavor, InstalledAddon, PendingCounts, ReleaseCheck, Snapshot, SyncPhase,
     TokenState,
 };
+use crate::ui::addon_widgets;
 use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
 use crate::ui::widgets::{
@@ -155,11 +156,12 @@ fn accounts_chamber(snapshot: &Snapshot) -> Div {
 }
 
 fn account_row(flavor: &Flavor, account: &Account, wow_running: bool) -> Div {
-    let pending_summary = account
-        .pending
-        .as_ref()
-        .map(pending_summary_text)
-        .unwrap_or_else(|| "unreadable".to_owned());
+    // extract() only fills `pending` when the whole file parsed, so a problem means no counts.
+    let pending_summary = match (&account.pending, &account.read_problem) {
+        (Some(pending), _) => pending_summary_text(pending),
+        (None, Some(problem)) => format!("couldn't read the save: {problem}"),
+        (None, None) => "nothing recorded yet".to_owned(),
+    };
     div()
         .flex()
         .items_center()
@@ -249,6 +251,19 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
         ReleaseCheck::Known { latest, .. } => Some(latest.version.clone()),
         _ => None,
     };
+    let checking = matches!(snapshot.addon_release, ReleaseCheck::Checking);
+    let checked_line = match &snapshot.addon_release {
+        ReleaseCheck::Known { checked_at, .. } => Some(format!("checked {}", ago(*checked_at))),
+        _ => None,
+    };
+    let pin = snapshot.settings.addon_pinned_version.clone();
+
+    let header = div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .child(addon_widgets::check_updates_button("check-addon-updates", engine.clone(), checking))
+        .when_some(checked_line, |this, line| this.child(freshness_line(line)));
 
     let mut body = div().flex().flex_col().gap_2();
     let mut any = false;
@@ -267,6 +282,8 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
             // checkout doesn't, and neither does an install we can't compare (offline, odd version string).
             let needs_update =
                 installed.is_none() || matches!(status, Some(VersionStatus::Outdated));
+            let pinned_and_outdated =
+                pin.is_some() && matches!(status, Some(VersionStatus::Outdated));
             let version_line = match (&installed, &latest_version) {
                 (Some(i), Some(l)) if needs_update => format!("v{i} \u{2192} v{l} available"),
                 (Some(i), _) => format!("v{i}"),
@@ -281,57 +298,80 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
             let flavor_path = flavor.path.clone();
             let engine = engine.clone();
             let wow_running = snapshot.wow_running;
-            body = body.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(palette::ink())
-                                            .child(flavor.dir_name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(palette::mist2())
-                                            .child(version_line),
-                                    ),
-                            )
-                            .child(if !needs_update {
-                                state_tag(tag_label, tag_tone).into_any_element()
-                            } else {
-                                Button::new(format!("update-addon-{}", flavor.dir_name))
-                                    .small()
-                                    .primary()
-                                    .label(if installed.is_none() { "Install" } else { "Update" })
-                                    .tooltip("Install the latest addon release")
-                                    .on_click(move |_, _, _| {
-                                        engine.send(crate::state::Command::InstallAddon {
-                                            flavor: flavor_path.clone(),
-                                        })
-                                    })
-                                    .into_any_element()
-                            }),
-                    )
-                    .when(wow_running && needs_update, |this| {
-                        this.child(
-                            div().text_xs().text_color(palette::mist2()).child(
-                                "WoW is running \u{2014} type /reload in game after updating",
-                            ),
-                        )
-                    }),
+            let version_menu = addon_widgets::version_dropdown(
+                format!("addon-version-menu-{}", flavor.dir_name),
+                flavor.path.clone(),
+                &snapshot.addon_releases,
+                installed.as_deref(),
+                engine.clone(),
             );
+            let action = if pinned_and_outdated {
+                addon_widgets::pinned_notice(
+                    format!("addon-back-to-latest-{}", flavor.dir_name),
+                    pin.as_deref().unwrap_or_default(),
+                    flavor_path.clone(),
+                    engine.clone(),
+                )
+                .into_any_element()
+            } else if !needs_update {
+                state_tag(tag_label, tag_tone).into_any_element()
+            } else {
+                Button::new(format!("update-addon-{}", flavor.dir_name))
+                    .small()
+                    .primary()
+                    .label(if installed.is_none() { "Install" } else { "Update" })
+                    .tooltip("Install the latest addon release")
+                    .on_click(move |_, _, _| {
+                        engine.send(crate::state::Command::InstallAddon {
+                            flavor: flavor_path.clone(),
+                            version: None,
+                        })
+                    })
+                    .into_any_element()
+            };
+            body =
+                body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(palette::ink())
+                                                .child(flavor.dir_name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(palette::mist2())
+                                                        .child(version_line),
+                                                )
+                                                .children(version_menu),
+                                        ),
+                                )
+                                .child(action),
+                        )
+                        .when(wow_running && needs_update, |this| {
+                            this.child(div().text_xs().text_color(palette::mist2()).child(
+                                "WoW is running \u{2014} type /reload in game after updating",
+                            ))
+                        }),
+                );
         }
     }
     let body = if any {
@@ -340,7 +380,7 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
         empty_state("No WoW folder found yet. Add it in Settings \u{2192} WoW Folders.")
             .into_any_element()
     };
-    chamber_with("Addon", div().flex().flex_col().gap_3().child(body))
+    chamber_with("Addon", div().flex().flex_col().gap_3().child(header).child(body))
 }
 
 fn event_status(my_status: Option<&str>) -> (&'static str, Tone) {
