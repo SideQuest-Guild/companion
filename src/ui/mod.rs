@@ -1,5 +1,6 @@
 //! The window and tray icon. Reads [`crate::state::Snapshot`], sends [`crate::state::Command`]s.
 
+pub mod addon_widgets;
 pub mod app;
 pub mod format;
 pub mod pages;
