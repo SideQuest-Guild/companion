@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.7.0 (2026-11-08)
+
+### New
+
+- Addon updates are checked every 15 minutes while WoW is running, and app updates every hour
 ## v0.6.0 (2026-11-08)
 
 ### New
