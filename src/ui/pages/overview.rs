@@ -220,8 +220,12 @@ fn account_row(flavor: &Flavor, account: &Account, wow_running: bool) -> Div {
                     },
                 ))
                 .child(state_tag(
-                    if account.inbox_staged { "Import staged" } else { "No import" },
-                    if account.inbox_staged { Tone::Good } else { Tone::Neutral },
+                    if flavor.inbox_staged_at.is_some() {
+                        "Site data ready"
+                    } else {
+                        "No site data"
+                    },
+                    if flavor.inbox_staged_at.is_some() { Tone::Good } else { Tone::Neutral },
                 )),
         )
 }
@@ -370,6 +374,14 @@ fn addon_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {
                             this.child(div().text_xs().text_color(palette::mist2()).child(
                                 "WoW is running \u{2014} type /reload in game after updating",
                             ))
+                        })
+                        .when_some(flavor.inbox_staged_at, |this, at| {
+                            this.child(
+                                div().text_xs().text_color(palette::mist2()).child(format!(
+                                    "Site data ready, /reload to load ({})",
+                                    ago(at)
+                                )),
+                            )
                         }),
                 );
         }

@@ -1,24 +1,17 @@
 //! A bounded, data-only parser for the subset of Lua that WoW's `SavedVariables` serializer emits (never executes
-//! anything: no functions, metatables, or expressions beyond literals), plus [`stage_inbox`] for writing the
-//! companion's staged `SQI1:` import back into a `SideQuest.lua` file per the inbox contract.
+//! anything: no functions, metatables, or expressions beyond literals).
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Utc};
 
-use crate::config::atomic_write;
 use crate::state::PendingCounts;
 
 /// Refuse to parse anything larger than this; a legitimate SavedVariables file is nowhere near it.
 pub const MAX_SIZE_BYTES: usize = 64 * 1024 * 1024;
 /// Refuse table nesting deeper than this (protects against malicious or corrupt input causing stack blowups).
 pub const MAX_DEPTH: usize = 64;
-
-const INBOX_BEGIN: &str =
-    "-- >>> SideQuest Companion inbox (applied and removed by the addon at login)";
-const INBOX_END: &str = "-- <<< SideQuest Companion inbox";
 
 /// A parsed Lua value: WoW's serializer only ever emits these.
 #[derive(Debug, Clone, PartialEq)]
@@ -119,8 +112,6 @@ pub fn parse_problem(text: &str) -> Option<String> {
 pub struct ParsedSavedVariables {
     pub last_export: Option<String>,
     pub pending: Option<PendingCounts>,
-    pub standings_generated_at: Option<DateTime<Utc>>,
-    pub inbox_staged: bool,
 }
 
 /// Best-effort extraction from a SavedVariables file's full text. Always returns something usable: if structured
@@ -140,13 +131,7 @@ pub fn extract(text: &str) -> ParsedSavedVariables {
         .map(str::to_owned)
         .or(regex_fallback);
     let pending = extract_pending(sidequest_db);
-    let standings_generated_at = sidequest_db
-        .get("standings")
-        .and_then(|s| s.get("generated_at"))
-        .and_then(LuaValue::as_f64)
-        .and_then(|secs| DateTime::<Utc>::from_timestamp(secs as i64, 0));
-    let inbox_staged = sidequest_db.get("inbox").is_some_and(|v| !v.is_nil());
-    ParsedSavedVariables { last_export, pending, standings_generated_at, inbox_staged }
+    ParsedSavedVariables { last_export, pending }
 }
 
 fn extract_pending(sidequest_db: &LuaValue) -> Option<PendingCounts> {
@@ -508,115 +493,8 @@ fn set_path(value: &mut LuaValue, path: &[LuaKey], new_value: LuaValue) {
     }
 }
 
-// --- Inbox staging (contract 7) ---------------------------------------------------------------------------------
-
-fn lua_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Whether `text` has a top-level `name = {` assignment (allowing leading whitespace and whitespace around `=`),
-/// i.e. whether it's safe to append/replace our inbox block.
-fn has_top_level_table(text: &str, name: &str) -> bool {
-    text.lines().any(|line| {
-        let Some(rest) = line.trim_start().strip_prefix(name) else { return false };
-        let Some(rest) = rest.trim_start().strip_prefix('=') else { return false };
-        rest.trim_start().starts_with('{')
-    })
-}
-
-/// Replace the `begin..end` marker block (inclusive) with `block`, or append `block` at the end of the file if no
-/// such block exists yet. Idempotent: calling this twice with a different `block` leaves only the latest one.
-/// Works on bytes so a file with non-UTF-8 bytes elsewhere is written back exactly as it was apart from the block.
-fn replace_or_append_block(original: &[u8], begin: &str, end: &str, block: &str) -> Vec<u8> {
-    let (begin, end) = (begin.as_bytes(), end.as_bytes());
-    if let Some(start_idx) = find_bytes(original, begin)
-        && let Some(end_rel) = find_bytes(&original[start_idx..], end)
-    {
-        let end_idx = start_idx + end_rel + end.len();
-        let tail_start = if original[end_idx..].starts_with(b"\n") { end_idx + 1 } else { end_idx };
-        let mut result = Vec::with_capacity(original.len() + block.len());
-        result.extend_from_slice(&original[..start_idx]);
-        result.extend_from_slice(block.as_bytes());
-        result.extend_from_slice(&original[tail_start..]);
-        return result;
-    }
-    let mut result = original.to_vec();
-    if !result.ends_with(b"\n") {
-        result.push(b'\n');
-    }
-    result.push(b'\n');
-    result.extend_from_slice(block.as_bytes());
-    result
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    haystack.windows(needle.len()).position(|window| window == needle)
-}
-
-/// Stage an `SQI1:` game import into a `SideQuest.lua` file per contract 7: refuses if the file has no top-level
-/// `SideQuestDB = {` table, or if `generated_at` is older than the file's current `standings.generated_at`.
-/// Writes atomically and keeps the previous content as `<path>.companion-bak`. Idempotent: calling it again with a
-/// newer import replaces the marker block rather than duplicating it. Callers must only call this while WoW is not
-/// running.
-pub fn stage_inbox(
-    path: &Path,
-    payload: &str,
-    generated_at: DateTime<Utc>,
-    now: DateTime<Utc>,
-) -> Result<()> {
-    let original = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let text = String::from_utf8_lossy(&original);
-    let original_text: &str = &text;
-    if !has_top_level_table(original_text, "SideQuestDB") {
-        bail!(
-            "refusing to stage an import: {} has no top-level 'SideQuestDB = {{' table",
-            path.display()
-        );
-    }
-    if let Some(standings_at) = extract(original_text).standings_generated_at
-        && generated_at < standings_at
-    {
-        bail!(
-            "refusing to stage an import generated at {generated_at} because it's older than the file's current standings ({standings_at})"
-        );
-    }
-    let block = format!(
-        "{INBOX_BEGIN}\nSideQuestDB[\"inbox\"] = {{ [\"payload\"] = \"{payload}\", [\"generated_at\"] = {gen_ts}, [\"staged_at\"] = {staged_ts} }}\n{INBOX_END}\n",
-        payload = lua_escape(payload),
-        gen_ts = generated_at.timestamp(),
-        staged_ts = now.timestamp(),
-    );
-    let replaced = replace_or_append_block(&original, INBOX_BEGIN, INBOX_END, &block);
-
-    let backup_path = backup_path_for(path);
-    std::fs::write(&backup_path, &original)
-        .with_context(|| format!("writing backup {}", backup_path.display()))?;
-
-    atomic_write(path, &replaced)
-}
-
-fn backup_path_for(path: &Path) -> std::path::PathBuf {
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(".companion-bak");
-    path.with_file_name(name)
-}
-
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
     use tempfile::tempdir;
 
     use super::*;
@@ -634,29 +512,19 @@ SideQuestDB = {
             ["updated"] = true,
         },
     },
-    ["standings"] = {
-        ["generated_at"] = 1700000000,
-    },
     ["notes"] = "a \"quoted\" line\nwith an escape \065\066\067",
-    ["inbox"] = nil,
 }
 -- a trailing comment
-SideQuestDB["inbox"] = {
-    ["payload"] = "SQI1:zzz",
-}
 "#;
 
     #[test]
-    fn extracts_last_export_pending_counts_standings_and_inbox() {
+    fn extracts_last_export_and_pending_counts() {
         let parsed = extract(FIXTURE);
         assert_eq!(parsed.last_export.as_deref(), Some("SQX1:AbC123+/=="));
         let pending = parsed.pending.expect("pending present");
         assert_eq!(pending.sessions, 2);
         assert_eq!(pending.loot, 0);
         assert!(pending.roster);
-        assert_eq!(parsed.standings_generated_at, Utc.timestamp_opt(1_700_000_000, 0).single());
-        // The later `SideQuestDB["inbox"] = {...}` statement overrides the earlier `nil`.
-        assert!(parsed.inbox_staged);
     }
 
     #[test]
@@ -734,53 +602,8 @@ Foo["a"] = 99
         assert!(parse_document(&text).is_err());
     }
 
-    fn write_savedvariables(dir: &Path, contents: &str) -> std::path::PathBuf {
-        let path = dir.join("SideQuest.lua");
-        std::fs::write(&path, contents).unwrap();
-        path
-    }
-
-    #[test]
-    fn stage_inbox_appends_block_to_a_file_without_one() {
-        let dir = tempdir().unwrap();
-        let path = write_savedvariables(
-            dir.path(),
-            "SideQuestDB = {\n  [\"standings\"] = { [\"generated_at\"] = 100 },\n}\n",
-        );
-        let generated_at = Utc.timestamp_opt(200, 0).unwrap();
-        let now = Utc.timestamp_opt(300, 0).unwrap();
-
-        stage_inbox(&path, "SQI1:abc", generated_at, now).unwrap();
-
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains(INBOX_BEGIN));
-        assert!(text.contains("SQI1:abc"));
-        assert!(text.contains("200"));
-        assert!(text.contains("300"));
-        assert!(extract(&text).inbox_staged);
-    }
-
-    #[test]
-    fn stage_inbox_is_idempotent_and_replaces_the_previous_block() {
-        let dir = tempdir().unwrap();
-        let path = write_savedvariables(
-            dir.path(),
-            "SideQuestDB = {\n  [\"standings\"] = { [\"generated_at\"] = 100 },\n}\n",
-        );
-        let now = Utc.timestamp_opt(300, 0).unwrap();
-
-        stage_inbox(&path, "SQI1:first", Utc.timestamp_opt(200, 0).unwrap(), now).unwrap();
-        stage_inbox(&path, "SQI1:second", Utc.timestamp_opt(250, 0).unwrap(), now).unwrap();
-
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(text.matches(INBOX_BEGIN).count(), 1);
-        assert!(!text.contains("SQI1:first"));
-        assert!(text.contains("SQI1:second"));
-    }
-
-    /// A note cut mid-character by the addon leaves bytes that aren't UTF-8; the export must still be found and
-    /// staging must write those bytes back untouched.
-    const NON_UTF8_SAVE: &[u8] = b"SideQuestDB = {\n  [\"note\"] = \"caf\xc3\",\n  [\"lastExport\"] = \"SQX1:QUJD\",\n  [\"pending\"] = { [\"loot\"] = { [1] = {} } },\n  [\"standings\"] = { [\"generated_at\"] = 100 },\n}\n";
+    /// A note cut mid-character by the addon leaves bytes that aren't UTF-8; the export must still be found.
+    const NON_UTF8_SAVE: &[u8] = b"SideQuestDB = {\n  [\"note\"] = \"caf\xc3\",\n  [\"lastExport\"] = \"SQX1:QUJD\",\n  [\"pending\"] = { [\"loot\"] = { [1] = {} } },\n}\n";
 
     #[test]
     fn a_save_with_non_utf8_bytes_still_yields_its_export_and_counts() {
@@ -793,71 +616,5 @@ Foo["a"] = 99
         assert_eq!(parsed.last_export.as_deref(), Some("SQX1:QUJD"));
         assert_eq!(parsed.pending.map(|p| p.loot), Some(1));
         assert_eq!(parse_problem(&text), None);
-    }
-
-    #[test]
-    fn stage_inbox_keeps_non_utf8_bytes_elsewhere_in_the_file() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("SideQuest.lua");
-        std::fs::write(&path, NON_UTF8_SAVE).unwrap();
-
-        stage_inbox(
-            &path,
-            "SQI1:abc",
-            Utc.timestamp_opt(200, 0).unwrap(),
-            Utc.timestamp_opt(300, 0).unwrap(),
-        )
-        .unwrap();
-
-        let bytes = std::fs::read(&path).unwrap();
-        assert!(bytes.starts_with(NON_UTF8_SAVE), "the original bytes are kept as they were");
-        assert!(extract(&read_text(&path).unwrap()).inbox_staged);
-    }
-
-    #[test]
-    fn stage_inbox_refuses_without_a_top_level_sidequestdb_table() {
-        let dir = tempdir().unwrap();
-        let path = write_savedvariables(dir.path(), "SomeOtherAddonDB = {}\n");
-        let err = stage_inbox(
-            &path,
-            "SQI1:abc",
-            Utc.timestamp_opt(1, 0).unwrap(),
-            Utc.timestamp_opt(2, 0).unwrap(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("SideQuestDB"));
-    }
-
-    #[test]
-    fn stage_inbox_refuses_an_import_older_than_current_standings() {
-        let dir = tempdir().unwrap();
-        let path = write_savedvariables(
-            dir.path(),
-            "SideQuestDB = {\n  [\"standings\"] = { [\"generated_at\"] = 1000 },\n}\n",
-        );
-        let err = stage_inbox(
-            &path,
-            "SQI1:abc",
-            Utc.timestamp_opt(500, 0).unwrap(),
-            Utc.timestamp_opt(600, 0).unwrap(),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("older"));
-    }
-
-    #[test]
-    fn stage_inbox_writes_a_backup_of_the_previous_content() {
-        let dir = tempdir().unwrap();
-        let original = "SideQuestDB = {\n  [\"standings\"] = { [\"generated_at\"] = 1 },\n}\n";
-        let path = write_savedvariables(dir.path(), original);
-        stage_inbox(
-            &path,
-            "SQI1:abc",
-            Utc.timestamp_opt(2, 0).unwrap(),
-            Utc.timestamp_opt(3, 0).unwrap(),
-        )
-        .unwrap();
-        let backup = backup_path_for(&path);
-        assert_eq!(std::fs::read_to_string(backup).unwrap(), original);
     }
 }

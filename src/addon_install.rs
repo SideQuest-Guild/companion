@@ -285,6 +285,25 @@ mod tests {
         assert_eq!(read_installed_version(dir.path()).unwrap(), "v0.1.0");
     }
 
+    #[test]
+    fn install_zip_leaves_a_sibling_sidequest_inbox_folder_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox_dir = dir.path().join("SideQuest_Inbox");
+        std::fs::create_dir_all(&inbox_dir).unwrap();
+        std::fs::write(inbox_dir.join("Inbox.lua"), b"-- companion owned\n").unwrap();
+        std::fs::write(inbox_dir.join("SideQuest_Inbox.toc"), b"## Interface: 16001\n").unwrap();
+
+        // A fresh install, then an update over it: the companion's own addon folder must survive both.
+        install_and_mark(&release_zip("v0.1.0"), dir.path()).unwrap();
+        assert_eq!(std::fs::read(inbox_dir.join("Inbox.lua")).unwrap(), b"-- companion owned\n");
+        install_and_mark(&release_zip("v0.2.0"), dir.path()).unwrap();
+        assert_eq!(std::fs::read(inbox_dir.join("Inbox.lua")).unwrap(), b"-- companion owned\n");
+        assert_eq!(
+            std::fs::read(inbox_dir.join("SideQuest_Inbox.toc")).unwrap(),
+            b"## Interface: 16001\n"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn install_zip_restores_backup_when_the_swap_rename_fails() {

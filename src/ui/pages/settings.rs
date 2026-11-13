@@ -403,7 +403,7 @@ impl SettingsPage {
                 ))
                 .child(labeled_switch(
                     "stage-imports",
-                    "Stage game imports back to the addon",
+                    "Keep site data ready for the addon (/reload in game to load it)",
                     self.draft.stage_imports,
                     cx.listener(|this, v, _, cx| {
                         this.draft.stage_imports = *v;

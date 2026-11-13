@@ -25,7 +25,8 @@ pub struct Settings {
     pub auto_detect: bool,
     /// Upload a new export as soon as WoW writes it.
     pub auto_sync: bool,
-    /// After an upload, fetch the game import and stage it in SavedVariables while WoW is closed.
+    /// Keep the companion's `SideQuest_Inbox` addon folder current with the latest game import, so a /reload
+    /// in game picks it up whether or not WoW is running.
     pub stage_imports: bool,
     pub check_addon_updates: bool,
     /// Install addon updates without asking, WoW running or not (a running game loads them on /reload). On by
@@ -247,6 +248,9 @@ pub struct Flavor {
     pub path: PathBuf,
     pub addon: InstalledAddon,
     pub accounts: Vec<Account>,
+    /// When the companion last wrote `SideQuest_Inbox/Inbox.lua` here (parsed back from that file's own
+    /// `staged_at`), or `None` if it hasn't written one yet.
+    pub inbox_staged_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,10 +276,6 @@ pub struct Account {
     pub export_hash: Option<String>,
     /// Whether that export has already been uploaded.
     pub export_uploaded: bool,
-    /// An `SQI1:` import is staged in the file and the addon hasn't applied it yet.
-    pub inbox_staged: bool,
-    /// When the addon's standings were generated (`SideQuestDB.standings.generated_at`).
-    pub standings_generated_at: Option<DateTime<Utc>>,
     /// Why the save file couldn't be read or parsed, shown instead of the pending counts.
     pub read_problem: Option<String>,
 }
@@ -430,9 +430,10 @@ pub enum Command {
         flavor: PathBuf,
         version: Option<String>,
     },
-    /// Fetch the game import and stage it into this SavedVariables file now (WoW must be closed).
+    /// Fetch the game import and write it into this flavor's `SideQuest_Inbox` addon folder now, whether or
+    /// not WoW is running.
     StageImport {
-        saved_variables: PathBuf,
+        flavor: PathBuf,
     },
     CheckAppUpdate,
     InstallAppUpdate,

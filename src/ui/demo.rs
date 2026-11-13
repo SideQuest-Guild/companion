@@ -74,8 +74,6 @@ pub fn snapshot() -> Snapshot {
             pending: Some(pending.clone()),
             export_hash: Some("9f3a2b1c".into()),
             export_uploaded: false,
-            inbox_staged: false,
-            standings_generated_at: Some(now - Duration::hours(2)),
             read_problem: None,
         },
         Account {
@@ -88,8 +86,6 @@ pub fn snapshot() -> Snapshot {
             pending: Some(PendingCounts::default()),
             export_hash: Some("1a2b3c4d".into()),
             export_uploaded: true,
-            inbox_staged: true,
-            standings_generated_at: Some(now - Duration::hours(26)),
             read_problem: None,
         },
     ];
@@ -107,6 +103,7 @@ pub fn snapshot() -> Snapshot {
                 ),
             },
             accounts,
+            inbox_staged_at: Some(now - Duration::minutes(8)),
         }],
     }];
 

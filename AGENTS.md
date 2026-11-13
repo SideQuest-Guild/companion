@@ -59,10 +59,14 @@ them needs to agree before it lands.
 - No `unwrap()`/`expect()` outside tests, except a truly infallible case with a comment explaining why.
 - Never log a sync token or calendar URL, not even in a debug build. Secrets go in the OS keyring (service
   `com.sidequest-guild.companion`); the `secrets.json` fallback file is 0600 and still never logged.
-- The staged-import inbox block written into `SideQuest.lua` is a contract with the addon (exact marker lines, exact
-  Lua table shape, atomic write with a `.companion-bak` backup, never written while WoW is running, never older than
-  the file's own `standings.generated_at`). Changing its format needs a matching change on the addon side.
-- The website deploys independently: tolerate `401`/`404` from routes it hasn't shipped yet (e.g. the game-import
-  endpoint on an older site) instead of treating them as fatal errors -- never assume the site has already deployed.
+- The `SideQuest_Inbox` addon folder the companion writes (`SideQuest_Inbox.toc` and `Inbox.lua`, under each
+  flavor's `Interface/AddOns`) is a contract with the addon: exact `.toc` fields (its `## Interface:` line copied
+  from the `SideQuest` addon's own `.toc`), exact `Inbox.lua` table shape, atomic write, never an import older
+  than the `generated_at` already in `Inbox.lua`. It's written whether or not WoW is running -- WoW only reads
+  addon files at login and `/reload`, never writes them, so there's nothing to defer. Changing its format needs a
+  matching change on the addon side.
+- The website deploys independently: tolerate `401`/`403`/`404` from routes it hasn't shipped yet or doesn't permit
+  this account on (e.g. the game-import endpoint on an older site, or for a non-officer) instead of treating them
+  as fatal errors -- never assume the site has already deployed.
 - Release assets, their names, and what's inside them are fixed by the self-updater and addon-installer code that
   consumes them; see `.github/workflows/release.yml` and `packaging/` before changing either.

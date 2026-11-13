@@ -2,7 +2,7 @@
 //! checks for addon/app updates, and fires raid reminders. Runs entirely inside the tokio runtime spawned by
 //! [`crate::engine::start`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -34,6 +34,8 @@ const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(3600);
 const EVENTS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMINDER_TICK: Duration = Duration::from_secs(30);
 const WOW_POLL_INTERVAL: Duration = Duration::from_secs(10);
+/// How often the game import is fetched and staged into every flavor's inbox while WoW is running.
+const STAGE_IMPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const NOTICE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const FS_DEBOUNCE: Duration = Duration::from_secs(2);
 const NOTICE_LIFETIME: chrono::Duration = chrono::Duration::seconds(6);
@@ -70,6 +72,7 @@ pub async fn run(
     let mut events_interval = tokio::time::interval(EVENTS_INTERVAL);
     let mut reminder_interval = tokio::time::interval(REMINDER_TICK);
     let mut wow_poll_interval = tokio::time::interval(WOW_POLL_INTERVAL);
+    let mut stage_import_interval = tokio::time::interval(STAGE_IMPORT_INTERVAL);
     let mut notice_sweep_interval = tokio::time::interval(NOTICE_SWEEP_INTERVAL);
     let mut fs_debounce_until: Option<tokio::time::Instant> = None;
 
@@ -100,6 +103,9 @@ pub async fn run(
             _ = events_interval.tick() => { engine.refresh_events().await; }
             _ = reminder_interval.tick() => { engine.reminder_tick().await; }
             _ = wow_poll_interval.tick() => { engine.poll_wow_running().await; }
+            _ = stage_import_interval.tick() => {
+                if engine.wow_running { engine.stage_all_flavors().await; }
+            }
             _ = notice_sweep_interval.tick() => { engine.sweep_notices(); }
             () = sleep_until_optional(engine.login_poll.as_ref().map(|p| p.next_poll_at)) => {
                 engine.poll_login().await;
@@ -184,7 +190,6 @@ struct Engine {
     reminder_scheduler: reminders::ReminderScheduler,
 
     backoff: HashMap<PathBuf, BackoffEntry>,
-    pending_stage: HashSet<PathBuf>,
 
     watcher: Option<notify::RecommendedWatcher>,
     fs_events: Option<tokio::sync::mpsc::UnboundedReceiver<()>>,
@@ -236,7 +241,6 @@ impl Engine {
             events: EventsState::default(),
             reminder_scheduler: reminders::ReminderScheduler::default(),
             backoff: HashMap::new(),
-            pending_stage: HashSet::new(),
             watcher: None,
             fs_events: None,
             login: LoginState::Idle,
@@ -274,6 +278,7 @@ impl Engine {
         if self.settings.check_app_updates {
             self.check_app_update().await;
         }
+        self.stage_all_flavors().await;
         self.refresh_events().await;
     }
 
@@ -309,9 +314,7 @@ impl Engine {
             Command::InstallAddon { flavor, version } => {
                 self.handle_install_addon_command(flavor, version).await
             }
-            Command::StageImport { saved_variables } => {
-                self.handle_stage_import_command(saved_variables).await
-            }
+            Command::StageImport { flavor } => self.handle_stage_import_command(flavor).await,
             Command::CheckAppUpdate => self.check_app_update().await,
             Command::InstallAppUpdate => self.install_app_update().await,
             Command::RefreshEvents => self.refresh_events().await,
@@ -652,19 +655,11 @@ impl Engine {
         }
     }
 
-    async fn handle_stage_import_command(&mut self, saved_variables: PathBuf) {
+    async fn handle_stage_import_command(&mut self, flavor: PathBuf) {
         if !self.is_officer() {
             self.push_notice(
                 NoticeLevel::Warning,
                 "Staging a game import is for officers.".to_owned(),
-            );
-            self.publish();
-            return;
-        }
-        if wow::process::is_wow_running() {
-            self.push_notice(
-                NoticeLevel::Warning,
-                "Close WoW before staging an import.".to_owned(),
             );
             self.publish();
             return;
@@ -677,7 +672,7 @@ impl Engine {
             self.publish();
             return;
         };
-        self.stage_import_now(&saved_variables, &token).await;
+        self.stage_import_now(&flavor, &token).await;
         self.discover_installs();
         self.publish();
     }
@@ -910,25 +905,27 @@ impl Engine {
     /// Uploads every enabled account's new export; returns how many uploads it tried.
     async fn upload_pending_exports(&mut self, token: &str) -> usize {
         let now = Utc::now();
-        let candidates: Vec<(PathBuf, String, String)> = self
+        let candidates: Vec<(PathBuf, PathBuf, String, String)> = self
             .installs
             .iter()
             .flat_map(|install| install.flavors.iter())
-            .flat_map(|flavor| flavor.accounts.iter())
-            .filter(|account| account.enabled && !account.export_uploaded)
-            .filter(|account| {
+            .flat_map(|flavor| {
+                flavor.accounts.iter().map(move |account| (flavor.path.clone(), account))
+            })
+            .filter(|(_, account)| account.enabled && !account.export_uploaded)
+            .filter(|(_, account)| {
                 !self.backoff.get(&account.saved_variables).is_some_and(|b| b.next_attempt_at > now)
             })
-            .filter_map(|account| {
+            .filter_map(|(flavor_path, account)| {
                 let text = wow::savedvars::read_text(&account.saved_variables).ok()?;
                 let export = wow::savedvars::extract(&text).last_export?;
-                Some((account.saved_variables.clone(), account.name.clone(), export))
+                Some((flavor_path, account.saved_variables.clone(), account.name.clone(), export))
             })
             .collect();
 
         let attempted = candidates.len();
-        for (saved_variables, account_name, export) in candidates {
-            self.upload_one(token, &saved_variables, &account_name, &export).await;
+        for (flavor_path, saved_variables, account_name, export) in candidates {
+            self.upload_one(token, &flavor_path, &saved_variables, &account_name, &export).await;
         }
         attempted
     }
@@ -936,6 +933,7 @@ impl Engine {
     async fn upload_one(
         &mut self,
         token: &str,
+        flavor_path: &Path,
         saved_variables: &Path,
         account_name: &str,
         export: &str,
@@ -968,9 +966,7 @@ impl Engine {
                 self.set_phase(SyncPhase::Watching);
                 self.sync.last_success = Some(Utc::now());
 
-                if self.settings.stage_imports {
-                    self.maybe_stage_import(saved_variables, token).await;
-                }
+                self.maybe_stage_import(flavor_path, token).await;
             }
             Err(err) => self.handle_upload_error(saved_variables, account_name, err).await,
         }
@@ -1016,19 +1012,35 @@ impl Engine {
         }
     }
 
-    async fn maybe_stage_import(&mut self, saved_variables: &Path, token: &str) {
-        if wow::process::is_wow_running() {
-            self.pending_stage.insert(saved_variables.to_path_buf());
+    /// Fetches the current game import and writes it into `flavor`'s `SideQuest_Inbox` addon folder, when the
+    /// `stage_imports` setting is on and the signed-in account is an officer (the game-import endpoint is
+    /// officer-only). Runs whether or not WoW is running: WoW only reads addon files at login and `/reload`,
+    /// never writes them, so there's nothing to defer.
+    async fn maybe_stage_import(&mut self, flavor: &Path, token: &str) {
+        if !self.settings.stage_imports || !self.is_officer() {
             return;
         }
-        self.stage_import_now(saved_variables, token).await;
+        self.stage_import_now(flavor, token).await;
     }
 
-    async fn stage_import_now(&mut self, saved_variables: &Path, token: &str) {
-        let label = account_label(saved_variables);
+    /// Writes the current game import into every discovered flavor's inbox: on the periodic while-WoW-running
+    /// poll and once at startup.
+    async fn stage_all_flavors(&mut self) {
+        let Some(token) = self.token.clone() else { return };
+        let flavors: Vec<PathBuf> =
+            self.installs.iter().flat_map(|i| &i.flavors).map(|f| f.path.clone()).collect();
+        for flavor in flavors {
+            self.maybe_stage_import(&flavor, &token).await;
+        }
+        self.discover_installs();
+        self.publish();
+    }
+
+    async fn stage_import_now(&mut self, flavor: &Path, token: &str) {
+        let label = flavor_label(flavor);
         match api::game_import(&self.client, &self.settings.site_url, token).await {
-            Ok(game_import) => match wow::savedvars::stage_inbox(
-                saved_variables,
+            Ok(game_import) => match wow::inbox_file::write(
+                flavor,
                 &game_import.payload,
                 game_import.generated_at,
                 Utc::now(),
@@ -1041,7 +1053,6 @@ impl Engine {
                         "Game import staged".to_owned().as_str(),
                         None,
                     );
-                    self.pending_stage.remove(saved_variables);
                 }
                 Err(err) => {
                     self.push_history(
@@ -1053,11 +1064,11 @@ impl Engine {
                     );
                 }
             },
-            // An old site answers 401 here even with a valid (already-tested) token: it just doesn't support
-            // staging yet. Leave it queued rather than erroring.
-            Err(ApiError::Unauthorized) => {
+            // An old (or unupgraded) site answers 401/403/404 here: it either doesn't support the game-import
+            // endpoint yet, or this account isn't an officer there. Either way there's nothing to stage, quietly.
+            Err(ApiError::Unauthorized | ApiError::Forbidden(_) | ApiError::NotFound) => {
                 tracing::debug!(
-                    "game-import not supported by this site yet (treating as unsupported, not a token error)"
+                    "game-import not available for this account or site; treating as nothing to stage"
                 );
             }
             Err(err) => {
@@ -1073,20 +1084,7 @@ impl Engine {
     }
 
     async fn poll_wow_running(&mut self) {
-        let running = wow::process::is_wow_running();
-        let just_closed = self.wow_running && !running;
-        self.wow_running = running;
-
-        if just_closed
-            && !self.pending_stage.is_empty()
-            && let Some(token) = self.token.clone()
-        {
-            let paths: Vec<PathBuf> = self.pending_stage.iter().cloned().collect();
-            for path in paths {
-                self.stage_import_now(&path, &token).await;
-            }
-            self.discover_installs();
-        }
+        self.wow_running = wow::process::is_wow_running();
         self.publish();
     }
 
@@ -1416,8 +1414,6 @@ fn enrich_account(account: &mut Account, sync_state: &config::SyncState) {
     account.read_problem = wow::savedvars::parse_problem(&text);
     let parsed = wow::savedvars::extract(&text);
     account.pending = parsed.pending;
-    account.inbox_staged = parsed.inbox_staged;
-    account.standings_generated_at = parsed.standings_generated_at;
     match parsed.last_export {
         Some(export) => {
             let hash = sha256_hex(&export);
@@ -1454,6 +1450,14 @@ fn account_label(saved_variables: &Path) -> String {
         (None, Some(account)) => account,
         _ => saved_variables.display().to_string(),
     }
+}
+
+/// A flavor path's label for history entries, e.g. `_forever_`.
+fn flavor_label(flavor: &Path) -> String {
+    flavor
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| flavor.display().to_string())
 }
 
 /// Whether a check that found `latest` should install it unattended: the user left both update switches on,
@@ -1643,6 +1647,80 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn staging_an_import_writes_the_inbox_file_immediately_even_while_wow_is_running() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/epgp/game-import"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "payload": "SQI1:xyz",
+                "generated_at": "2026-01-01T00:00:00Z",
+            })))
+            .mount(&server)
+            .await;
+
+        let root = tempfile::tempdir().unwrap();
+        let flavor = root.path().join("_forever_");
+        std::fs::create_dir_all(&flavor).unwrap();
+
+        let mut engine = test_engine(server.uri(), Vec::new());
+        // The old contract refused to stage until this went false; the new one must ignore it entirely.
+        engine.wow_running = true;
+
+        engine.handle_stage_import_command(flavor.clone()).await;
+
+        let lua =
+            std::fs::read_to_string(flavor.join("Interface/AddOns/SideQuest_Inbox/Inbox.lua"))
+                .unwrap();
+        assert!(lua.contains("SQI1:xyz"), "{lua}");
+        assert!(
+            engine.notices.iter().all(|n| !n.text.contains("Close WoW")),
+            "staging must not ask to close WoW anymore: {:?}",
+            engine.notices
+        );
+        assert!(
+            engine
+                .history
+                .iter()
+                .any(|h| h.kind == HistoryKind::ImportStaged && h.outcome == Outcome::Success)
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_import_treats_401_403_404_as_nothing_to_stage_without_a_failure_entry() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        for status in [401, 403, 404] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/epgp/game-import"))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+
+            let root = tempfile::tempdir().unwrap();
+            let flavor = root.path().join("_forever_");
+            std::fs::create_dir_all(&flavor).unwrap();
+            let mut engine = test_engine(server.uri(), Vec::new());
+
+            engine.stage_import_now(&flavor, "sqs_test").await;
+
+            assert!(
+                engine.history.is_empty(),
+                "status {status} must not record a failed import-staged entry: {:?}",
+                engine.history
+            );
+            assert!(
+                !flavor.join("Interface/AddOns/SideQuest_Inbox/Inbox.lua").exists(),
+                "status {status} must not write anything"
+            );
+        }
+    }
+
     #[test]
     fn nothing_new_message_falls_back_for_mixed_backoff_state() {
         let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
@@ -1663,10 +1741,9 @@ mod tests {
                     pending: None,
                     export_hash: Some("deadbeef".to_owned()),
                     export_uploaded: false,
-                    inbox_staged: false,
-                    standings_generated_at: None,
                     read_problem: None,
                 }],
+                inbox_staged_at: None,
             }],
         }];
         assert_eq!(engine.sync_nothing_new_message(), NOTHING_NEW_TO_SYNC);

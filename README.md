@@ -2,7 +2,7 @@
 
 A system-tray app for the [SideQuest](https://github.com/SideQuest-Guild/addon) guild addon. It watches the addon's
 save file, uploads new raid records to [sidequest-guild.com](https://sidequest-guild.com) as soon as they appear,
-stages the site's reply back for the addon to pick up at your next login, keeps the addon itself up to date, and
+stages the site's reply back for the addon to pick up at your next `/reload`, keeps the addon itself up to date, and
 reminds you before guild events. It's a small native app built with [GPUI](https://www.gpui.rs/) -- no browser, no webview,
 just a window that draws itself.
 
@@ -77,9 +77,11 @@ Officers also get:
 - **Auto-sync:** whenever the addon writes a new `SQX1:` export to `SideQuest.lua` (on logout or `/reload`), the
   companion uploads it within a few seconds and shows the result (new sessions, encounters, loot, awards) in its
   **History** tab.
-- **Import staging:** after an upload, the companion asks the site for the matching `SQI1:` game import and writes it
-  into `SideQuest.lua` as a staged inbox entry, but **only while WoW is closed**. The addon applies it the next time
-  an officer logs in, then clears it. Nobody has to copy and paste an import string by hand.
+- **Import staging:** after an upload, and every 5 minutes while WoW is running, the companion asks the site for
+  the matching `SQI1:` game import and keeps it ready in a small addon folder it manages, `SideQuest_Inbox`, next
+  to the SideQuest addon. Typing `/reload` in game always loads the newest one, whether or not WoW was ever
+  closed. The first time this ships, WoW needs one full restart so it notices the new `SideQuest_Inbox` folder;
+  after that, `/reload` is all it takes. Nobody has to copy and paste an import string by hand.
 
 ## Settings and logs
 

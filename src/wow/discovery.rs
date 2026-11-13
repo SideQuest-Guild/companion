@@ -283,8 +283,6 @@ pub fn find_accounts(flavor_dir: &Path, disabled_accounts: &[PathBuf]) -> Vec<Ac
                 pending: None,
                 export_hash: None,
                 export_uploaded: false,
-                inbox_staged: false,
-                standings_generated_at: None,
                 read_problem: None,
             })
         })
@@ -310,7 +308,8 @@ pub fn scan_install(
                 path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let addon = find_addon(&path);
             let accounts = find_accounts(&path, disabled_accounts);
-            Flavor { dir_name, path, addon, accounts }
+            let inbox_staged_at = super::inbox_file::read_status(&path).map(|s| s.staged_at);
+            Flavor { dir_name, path, addon, accounts, inbox_staged_at }
         })
         .collect();
     Some(WowInstall { root: root.to_path_buf(), source, flavors })
