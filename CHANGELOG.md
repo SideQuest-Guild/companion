@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.0 (2026-11-13)
+
+### New
+
+- Site data reaches the addon with a /reload: the companion keeps it ready in its own SideQuest_Inbox addon, even while WoW is running
+
+
 ## v0.7.0 (2026-11-08)
 
 ### New
