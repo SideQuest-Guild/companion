@@ -1,12 +1,15 @@
 # Changelog
 
+## v0.9.0 (2026-11-13)
+
+### New
+
+- Every member's companion uploads their sign-ups and directory entry on each /reload or logout, and shows live standings, events with the recruitment drive leaderboard, and the guild roster and news
 ## v0.8.0 (2026-11-13)
 
 ### New
 
 - Site data reaches the addon with a /reload: the companion keeps it ready in its own SideQuest_Inbox addon, even while WoW is running
-
-
 ## v0.7.0 (2026-11-08)
 
 ### New
