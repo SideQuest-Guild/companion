@@ -31,21 +31,25 @@ use crate::ui::widgets::tracked_caps;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
+    Standings,
     History,
     Addon,
     Events,
+    Guild,
     Settings,
 }
 
 impl Page {
-    /// Parses the `--page` CLI flag's value (`overview`, `history`, `addon`, `events`, `settings`),
-    /// used to open directly on a page for screenshots and manual testing.
+    /// Parses the `--page` CLI flag's value (`overview`, `standings`, `history`, `addon`, `events`, `guild`,
+    /// `settings`), used to open directly on a page for screenshots and manual testing.
     pub fn from_flag(s: &str) -> Option<Self> {
         match s {
             "overview" => Some(Page::Overview),
+            "standings" => Some(Page::Standings),
             "history" => Some(Page::History),
             "addon" => Some(Page::Addon),
             "events" => Some(Page::Events),
+            "guild" => Some(Page::Guild),
             "settings" => Some(Page::Settings),
             _ => None,
         }
@@ -55,9 +59,11 @@ impl Page {
     fn room_art(self) -> &'static str {
         match self {
             Page::Overview => "rooms/courier-loft.webp",
+            Page::Standings => "rooms/ledger-chamber.webp",
             Page::History => "rooms/ledger-chamber.webp",
             Page::Addon => "rooms/armory.webp",
             Page::Events => "rooms/raid-hall.webp",
+            Page::Guild => "rooms/raid-hall.webp",
             Page::Settings => "rooms/round-table.webp",
         }
     }
@@ -70,9 +76,11 @@ impl Page {
 
 const PAGES: &[(Page, &str)] = &[
     (Page::Overview, "Overview"),
+    (Page::Standings, "Standings"),
     (Page::History, "History"),
     (Page::Addon, "Addon"),
     (Page::Events, "Events"),
+    (Page::Guild, "Guild"),
     (Page::Settings, "Settings"),
 ];
 
@@ -842,6 +850,7 @@ impl Render for AppRoot {
         let snapshot = self.snapshot.clone();
         let page_content: AnyElement = match self.page {
             Page::Overview => pages::overview::render(&snapshot, &engine).into_any_element(),
+            Page::Standings => pages::standings::render(&snapshot).into_any_element(),
             Page::History => pages::history::render(
                 &snapshot,
                 self.history_kind_filter,
@@ -856,6 +865,7 @@ impl Render for AppRoot {
                 cx.listener(|this, _, window, cx| this.open_reminder_settings(window, cx)),
             )
             .into_any_element(),
+            Page::Guild => pages::guild::render(&snapshot).into_any_element(),
             Page::Settings => self.settings.clone().update(cx, |settings, cx| {
                 settings.render(&snapshot, window, cx).into_any_element()
             }),

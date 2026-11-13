@@ -81,6 +81,7 @@ fn interface_line(flavor_dir: &Path) -> String {
 fn render_toc(interface: &str) -> String {
     format!(
         "## Interface: {interface}\n\
+         ## Dependencies: SideQuest\n\
          ## Title: SideQuest Inbox\n\
          ## Notes: Site data SideQuest Companion keeps here for the SideQuest addon. Managed by the companion.\n\
          ## Author: SideQuest Companion\n\
@@ -178,6 +179,7 @@ mod tests {
         assert_eq!(
             toc,
             "## Interface: 110105\n\
+             ## Dependencies: SideQuest\n\
              ## Title: SideQuest Inbox\n\
              ## Notes: Site data SideQuest Companion keeps here for the SideQuest addon. Managed by the companion.\n\
              ## Author: SideQuest Companion\n\
@@ -242,6 +244,38 @@ mod tests {
         )
         .unwrap();
         assert!(toc.starts_with("## Interface: 110200\n"), "{toc}");
+    }
+
+    #[test]
+    fn rewrites_an_old_toc_that_predates_the_dependencies_line() {
+        let dir = tempdir().unwrap();
+        write_sidequest_toc(dir.path(), "110105");
+        let addon_dir = dir.path().join("Interface/AddOns/SideQuest_Inbox");
+        std::fs::create_dir_all(&addon_dir).unwrap();
+        std::fs::write(
+            addon_dir.join("SideQuest_Inbox.toc"),
+            "## Interface: 110105\n\
+             ## Title: SideQuest Inbox\n\
+             ## Notes: Site data SideQuest Companion keeps here for the SideQuest addon. Managed by the companion.\n\
+             ## Author: SideQuest Companion\n\
+             ## Version: 1\n\
+             Inbox.lua\n",
+        )
+        .unwrap();
+
+        write(
+            dir.path(),
+            "SQI1:abc",
+            Utc.timestamp_opt(1, 0).unwrap(),
+            Utc.timestamp_opt(2, 0).unwrap(),
+        )
+        .unwrap();
+
+        let toc = std::fs::read_to_string(addon_dir.join("SideQuest_Inbox.toc")).unwrap();
+        assert!(
+            toc.contains("## Dependencies: SideQuest\n"),
+            "an old installed .toc without the line must be rewritten to add it: {toc}"
+        );
     }
 
     #[test]

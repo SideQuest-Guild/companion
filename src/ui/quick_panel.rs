@@ -156,8 +156,6 @@ impl Render for QuickPanel {
         let engine_pause = self.engine.clone();
         let paused = matches!(self.snapshot.sync.phase, SyncPhase::Paused);
         let uploading = matches!(self.snapshot.sync.phase, SyncPhase::Uploading);
-        let is_officer =
-            matches!(&self.snapshot.account, AccountState::SignedIn(m) if m.is_officer);
         let signed_in = matches!(self.snapshot.account, AccountState::SignedIn(_));
 
         let state_label = if !signed_in {
@@ -171,7 +169,7 @@ impl Render for QuickPanel {
 
         // The panel has no toast area, so the newest notice (a sync result, while it lasts) takes
         // the freshness line's place: a Sync now click always gets an answer here.
-        let freshness = if is_officer {
+        let freshness = if signed_in {
             match (self.snapshot.notices.last(), self.snapshot.sync.last_success) {
                 (Some(notice), _) => notice.text.clone(),
                 (None, Some(at)) => format!("Synced {}", ago(at)),
@@ -222,7 +220,7 @@ impl Render for QuickPanel {
             .flex_col()
             .gap_3()
             .child(freshness_line(freshness))
-            .when(is_officer, |d| {
+            .when(signed_in, |d| {
                 d.child(
                     div()
                         .flex()

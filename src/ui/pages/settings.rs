@@ -130,6 +130,7 @@ impl SettingsPage {
     ) -> impl IntoElement {
         self.sync_from_snapshot(snapshot, window, cx);
         let is_officer = matches!(&snapshot.account, AccountState::SignedIn(m) if m.is_officer);
+        let signed_in = matches!(snapshot.account, AccountState::SignedIn(_));
         div()
             .flex()
             .flex_col()
@@ -137,7 +138,7 @@ impl SettingsPage {
             .p_4()
             .child(self.account_section(snapshot, cx))
             .child(self.wow_folders_section(snapshot, cx))
-            .when(is_officer, |d| d.child(self.sync_section(cx)))
+            .when(signed_in, |d| d.child(self.sync_section(is_officer, cx)))
             .child(self.addon_updates_section(cx))
             .child(self.reminders_section(snapshot, cx))
             .child(self.app_section(snapshot, cx))
@@ -385,7 +386,7 @@ impl SettingsPage {
         )
     }
 
-    fn sync_section(&mut self, cx: &mut Context<Self>) -> Div {
+    fn sync_section(&mut self, is_officer: bool, cx: &mut Context<Self>) -> Div {
         section(
             "Sync",
             div()
@@ -401,15 +402,17 @@ impl SettingsPage {
                         this.mark_dirty(cx);
                     }),
                 ))
-                .child(labeled_switch(
-                    "stage-imports",
-                    "Keep site data ready for the addon (/reload in game to load it)",
-                    self.draft.stage_imports,
-                    cx.listener(|this, v, _, cx| {
-                        this.draft.stage_imports = *v;
-                        this.mark_dirty(cx);
-                    }),
-                ))
+                .when(is_officer, |d| {
+                    d.child(labeled_switch(
+                        "stage-imports",
+                        "Keep site data ready for the addon (/reload in game to load it)",
+                        self.draft.stage_imports,
+                        cx.listener(|this, v, _, cx| {
+                            this.draft.stage_imports = *v;
+                            this.mark_dirty(cx);
+                        }),
+                    ))
+                })
                 .child(labeled_switch(
                     "notify-sync",
                     "Notify on successful sync",

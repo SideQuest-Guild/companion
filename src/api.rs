@@ -101,6 +101,9 @@ pub struct ImportResult {
     pub announcements: Option<New>,
     pub recruits: Option<NewUpdated>,
     pub member_notes: Option<NewUpdatedVoided>,
+    /// Additive: `"officer"` or `"member"`, defaulting to `"officer"` for a site that predates it. Tells the
+    /// companion which worded success message to show for this upload.
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -292,6 +295,217 @@ pub async fn revoke_me(client: &Client, site: &str, token: &str) -> Result<(), A
     })
 }
 
+/// `GET {site}/api/epgp/standings` with the sync token (accepts session or sync token on the site).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StandingsResponse {
+    pub rows: Vec<StandingsRowDto>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct StandingsRowDto {
+    pub name: String,
+    #[serde(rename = "class")]
+    pub wow_class: Option<String>,
+    pub ep: f64,
+    pub gp: f64,
+    pub pr: f64,
+    pub trial: bool,
+}
+
+fn standings_url(site: &str) -> String {
+    format!("{}/api/epgp/standings", site.trim_end_matches('/'))
+}
+
+pub async fn standings(
+    client: &Client,
+    site: &str,
+    token: &str,
+) -> Result<StandingsResponse, ApiError> {
+    let resp = client
+        .get(standings_url(site))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|err| map_send_error(site, err))?;
+    handle_response(site, resp).await
+}
+
+/// `GET {site}/api/events/?when=upcoming` with the sync token: site-scheduled events, not only the ICS feed.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EventCountsDto {
+    pub signed: u32,
+    pub tentative: u32,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EventMySignupDto {
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EventSummaryDto {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub starts_at: DateTime<Utc>,
+    #[serde(default)]
+    pub ends_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub counts: Option<EventCountsDto>,
+    /// Additive: not every site version reports the caller's own answer on the list endpoint.
+    #[serde(default)]
+    pub my_signup: Option<EventMySignupDto>,
+}
+
+fn events_url(site: &str) -> String {
+    format!("{}/api/events/?when=upcoming", site.trim_end_matches('/'))
+}
+
+pub async fn events(
+    client: &Client,
+    site: &str,
+    token: &str,
+) -> Result<Vec<EventSummaryDto>, ApiError> {
+    let resp = client
+        .get(events_url(site))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|err| map_send_error(site, err))?;
+    handle_response(site, resp).await
+}
+
+/// `GET {site}/api/events/{event_id}/recruitment` with the sync token: one drive's leaderboard and recruits.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DriveLeaderDto {
+    pub inviter: String,
+    pub invited: u32,
+    pub counting: u32,
+    pub qualified: u32,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct DriveRecruitDto {
+    pub recruit: String,
+    pub inviter: String,
+    pub status: String,
+    pub qualifies_at: Option<DateTime<Utc>>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RecruitmentDriveDto {
+    pub event_id: String,
+    pub title: String,
+    #[serde(default)]
+    pub leaders: Vec<DriveLeaderDto>,
+    #[serde(default)]
+    pub recruits: Vec<DriveRecruitDto>,
+}
+
+fn recruitment_url(site: &str, event_id: &str) -> String {
+    format!("{}/api/events/{}/recruitment", site.trim_end_matches('/'), event_id)
+}
+
+pub async fn recruitment_drive(
+    client: &Client,
+    site: &str,
+    token: &str,
+    event_id: &str,
+) -> Result<RecruitmentDriveDto, ApiError> {
+    let resp = client
+        .get(recruitment_url(site, event_id))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|err| map_send_error(site, err))?;
+    handle_response(site, resp).await
+}
+
+/// `GET {site}/api/guild/roster` with the sync token: the member roster, alts grouped under their main.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GuildRosterCharacterDto {
+    pub name: String,
+    #[serde(rename = "class")]
+    pub wow_class: Option<String>,
+    pub level: u32,
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GuildRosterMemberDto {
+    pub name: String,
+    pub rank: Option<String>,
+    #[serde(default)]
+    pub characters: Vec<GuildRosterCharacterDto>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GuildRosterResponse {
+    pub members: Vec<GuildRosterMemberDto>,
+}
+
+fn guild_roster_url(site: &str) -> String {
+    format!("{}/api/guild/roster", site.trim_end_matches('/'))
+}
+
+pub async fn guild_roster(
+    client: &Client,
+    site: &str,
+    token: &str,
+) -> Result<GuildRosterResponse, ApiError> {
+    let resp = client
+        .get(guild_roster_url(site))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|err| map_send_error(site, err))?;
+    handle_response(site, resp).await
+}
+
+/// `GET {site}/api/guild/news` with the sync token: the latest guild news/announcements, newest first.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GuildNewsItemDto {
+    pub id: String,
+    pub at: DateTime<Utc>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GuildNewsResponse {
+    pub items: Vec<GuildNewsItemDto>,
+}
+
+fn guild_news_url(site: &str) -> String {
+    format!("{}/api/guild/news", site.trim_end_matches('/'))
+}
+
+pub async fn guild_news(
+    client: &Client,
+    site: &str,
+    token: &str,
+) -> Result<GuildNewsResponse, ApiError> {
+    let resp = client
+        .get(guild_news_url(site))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|err| map_send_error(site, err))?;
+    handle_response(site, resp).await
+}
+
 /// Start browser sign-in. `device_name` (e.g. the computer's name) is shown on the authorize page and becomes part
 /// of the minted token's name. A site without browser sign-in answers 404 ([`ApiError::NotFound`]).
 pub async fn start_device_authorization(
@@ -433,6 +647,143 @@ mod tests {
         assert_eq!(result.loot.new, 14);
         assert_eq!(result.roster.unwrap().updated, 1);
         assert_eq!(summary(&result), "2 sessions, 1 encounter, 14 loot, 31 awards, roster updated");
+    }
+
+    #[tokio::test]
+    async fn upload_scope_defaults_to_none_for_an_older_site_and_parses_member_scope() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/epgp/imports"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "recorder": "Alice",
+                "sessions": {"new": 0, "updated": 0},
+                "encounters": {"new": 0, "updated": 0},
+                "loot": {"new": 0, "updated": 0, "voided": 0},
+                "awards": {"new": 0, "updated": 0, "voided": 0},
+                "unlinked_characters": []
+            })))
+            .mount(&server)
+            .await;
+        let result =
+            upload(&client().unwrap(), &server.uri(), "sqs_test", "SQX1:abc").await.unwrap();
+        assert_eq!(result.scope, None, "an older site that doesn't send scope yet");
+
+        let body: ImportResult = serde_json::from_str(
+            r#"{"recorder": "Bob", "sessions": {"new": 0, "updated": 0}, "encounters": {"new": 0, "updated": 0},
+                "loot": {"new": 0, "updated": 0, "voided": 0}, "awards": {"new": 0, "updated": 0, "voided": 0},
+                "unlinked_characters": [], "signups": {"applied": 1}, "scope": "member"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.scope.as_deref(), Some("member"));
+        assert_eq!(body.signups.unwrap().applied, 1);
+    }
+
+    #[tokio::test]
+    async fn standings_tolerates_extra_and_missing_optional_fields() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/epgp/standings"))
+            .and(header("authorization", "Bearer sqs_test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "generated_at": "2024-01-01T00:00:00Z",
+                "rules": {"ep": {}, "gp": {}, "chase_multiplier": 1.0, "legendary_gp": 0, "os_percent": 50,
+                    "base_gp": 0, "min_gp": 0, "decay_percent": 10, "trial_days": 14,
+                    "weekly_reset_weekday": 1, "weekly_reset_hour_utc": 10},
+                "rows": [
+                    {"member_id": 1, "name": "Kaelthorne", "main": null, "main_name": null, "class": "mage",
+                        "characters": ["Kaelthorne"], "ep": 120.0, "gp": 60.0, "pr": 2.0, "trial": false},
+                    {"member_id": 2, "name": "Brightwillow", "main": null, "characters": [], "ep": 10.0,
+                        "gp": 10.0, "pr": 1.0, "trial": true}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        let resp = standings(&client().unwrap(), &server.uri(), "sqs_test").await.unwrap();
+        assert_eq!(resp.rows.len(), 2);
+        assert_eq!(resp.rows[0].name, "Kaelthorne");
+        assert_eq!(resp.rows[0].wow_class.as_deref(), Some("mage"));
+        assert_eq!(resp.rows[1].wow_class, None);
+    }
+
+    #[tokio::test]
+    async fn events_parses_counts_and_tolerates_missing_my_signup() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/events/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"id": "11111111-1111-1111-1111-111111111111", "kind": "raid", "title": "Hyjal Summit",
+                    "starts_at": "2024-06-01T00:00:00Z", "status": "scheduled",
+                    "counts": {"signed": 18, "tentative": 2}}
+            ])))
+            .mount(&server)
+            .await;
+        let list = events(&client().unwrap(), &server.uri(), "sqs_test").await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].counts.as_ref().unwrap().signed, 18);
+        assert!(list[0].my_signup.is_none(), "a site that doesn't report it yet");
+    }
+
+    #[tokio::test]
+    async fn guild_roster_and_news_parse() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/guild/roster"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "taken_at": "2024-06-01T00:00:00Z",
+                "members": [{"member_id": 1, "name": "Kaelthorne", "rank": "Officer", "raid_status": null,
+                    "main": null, "characters": [{"name": "Kaelthorne", "class": "mage", "level": 80,
+                        "zone": "Orgrimmar", "last_seen_at": "2024-06-01T00:00:00Z", "is_main": true}]}],
+                "unlinked": []
+            })))
+            .mount(&server)
+            .await;
+        let roster = guild_roster(&client().unwrap(), &server.uri(), "sqs_test").await.unwrap();
+        assert_eq!(roster.members.len(), 1);
+        assert_eq!(roster.members[0].characters[0].level, 80);
+
+        Mock::given(method("GET"))
+            .and(path("/api/guild/news"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{"id": "22222222-2222-2222-2222-222222222222", "at": "2024-06-01T00:00:00Z",
+                    "kind": "boss_kill", "text": "The guild defeated Ragnaros.", "character": null,
+                    "item_id": null, "quality": null}]
+            })))
+            .mount(&server)
+            .await;
+        let news = guild_news(&client().unwrap(), &server.uri(), "sqs_test").await.unwrap();
+        assert_eq!(news.items.len(), 1);
+        assert_eq!(news.items[0].text, "The guild defeated Ragnaros.");
+    }
+
+    #[tokio::test]
+    async fn recruitment_drive_parses_leaders_and_recruits() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/events/11111111-1111-1111-1111-111111111111/recruitment"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "event_id": "11111111-1111-1111-1111-111111111111", "title": "Autumn Drive",
+                "starts_at": "2024-06-01T00:00:00Z", "ends_at": "2024-06-15T00:00:00Z",
+                "settles_at": "2024-06-22T00:00:00Z", "reward_copper": 10000, "min_level": 10,
+                "stay_days": 7, "totals": {"invited": 3, "joined": 2, "counting": 1, "qualified": 1,
+                    "disqualified": 0, "paid": 0},
+                "leaders": [{"inviter": "Kaelthorne", "member_name": "Kaelthorne", "discord_id": null,
+                    "invited": 3, "joined": 2, "counting": 1, "qualified": 1}],
+                "recruits": [{"recruit": "Newbie", "inviter": "Kaelthorne", "invited_at": "2024-06-02T00:00:00Z",
+                    "joined_at": null, "qualifies_at": null, "status": "invited", "reason": null,
+                    "paid_at": null}]
+            })))
+            .mount(&server)
+            .await;
+        let drive = recruitment_drive(
+            &client().unwrap(),
+            &server.uri(),
+            "sqs_test",
+            "11111111-1111-1111-1111-111111111111",
+        )
+        .await
+        .unwrap();
+        assert_eq!(drive.leaders[0].qualified, 1);
+        assert_eq!(drive.recruits[0].recruit, "Newbie");
     }
 
     /// The exact body the real API returned for the addon's `export_v2.txt` fixture: a night with no matching

@@ -64,6 +64,12 @@ pub fn event_kind_label(kind: &str) -> String {
     }
 }
 
+/// Capitalizes the first letter, e.g. a WoW class string (`"warrior"` to `"Warrior"`).
+pub fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    chars.next().map_or_else(String::new, |first| first.to_uppercase().chain(chars).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +81,11 @@ mod tests {
         assert_eq!(event_kind_label("pvp"), "PvP");
         assert_eq!(event_kind_label("brand_new_kind"), "Brand new kind");
         assert_eq!(event_kind_label(""), "");
+    }
+
+    #[test]
+    fn capitalize_uppercases_only_the_first_letter() {
+        assert_eq!(capitalize("warrior"), "Warrior");
+        assert_eq!(capitalize(""), "");
     }
 }

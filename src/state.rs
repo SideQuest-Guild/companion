@@ -134,6 +134,10 @@ pub struct Snapshot {
     pub addon_releases: Vec<Release>,
     pub app_update: AppUpdate,
     pub events: EventsState,
+    /// Live guild data (standings, site events, a running recruitment drive, roster, news) fetched with the
+    /// sync token. Populated by the engine's periodic poll; empty/`None` means it hasn't succeeded yet, not an
+    /// error -- 401/403/404 from an older or non-member site are tolerated quietly.
+    pub guild: GuildData,
     pub wow_running: bool,
     /// Short-lived messages for the UI's toast area; the engine drops them after a few seconds.
     pub notices: Vec<Notice>,
@@ -384,6 +388,110 @@ pub struct UpcomingEvent {
     pub my_status: Option<String>,
     pub cancelled: bool,
     pub url: String,
+}
+
+/// Live guild data from [`crate::api`], read with the sync token. See [`Snapshot::guild`].
+#[derive(Debug, Clone, Default)]
+pub struct GuildData {
+    pub standings: Option<Standings>,
+    /// Site-scheduled events (not only the ICS feed), with headcounts and the member's own answer when known.
+    pub site_events: Vec<SiteEvent>,
+    /// The currently running recruitment drive, if any.
+    pub drive: Option<Drive>,
+    pub roster: Vec<RosterMember>,
+    /// Newest first.
+    pub news: Vec<NewsItem>,
+    pub fetched_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Standings {
+    /// The top 10 rows by PR, highest first.
+    pub top: Vec<StandingsRow>,
+    /// The signed-in member's own row, matched by display name, when they're on the list.
+    pub you: Option<StandingsRow>,
+    /// 1-based rank among every row (by PR, highest first), when `you` is known.
+    pub your_rank: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandingsRow {
+    pub name: String,
+    pub class: Option<String>,
+    pub ep: f64,
+    pub gp: f64,
+    pub pr: f64,
+    pub trial: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteEvent {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub starts_at: DateTime<Utc>,
+    /// `None` for an event the site never set an end for (most non-raid kinds).
+    pub ends_at: Option<DateTime<Utc>>,
+    pub status: String,
+    pub going: u32,
+    pub maybe: u32,
+    /// The member's own answer (`signed`, `tentative`, `absent`), when the site reports it for this event.
+    pub my_answer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Drive {
+    pub event_id: String,
+    pub title: String,
+    /// Inviter standings: qualified, potential (still in the 7-day clock) and invited counts.
+    pub leaders: Vec<DriveLeader>,
+    /// Recruits invited by the signed-in member.
+    pub your_recruits: Vec<DriveRecruitRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriveLeader {
+    pub inviter: String,
+    pub invited: u32,
+    /// The site's `counting`: still in the 7-day qualification clock.
+    pub potential: u32,
+    pub qualified: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriveRecruitRow {
+    pub recruit: String,
+    /// `invited`, `joined`, `counting`, `qualified` or `disqualified`.
+    pub status: String,
+    /// When this recruit's 7-day clock finishes, once they've joined. `None` before joining, or for a status
+    /// that isn't still counting toward qualification.
+    pub qualifies_at: Option<DateTime<Utc>>,
+    /// Why a `disqualified` recruit doesn't count: `returning`, `own_alt`, `left`, `low_level` or
+    /// `never_joined`.
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterMember {
+    pub name: String,
+    pub rank: Option<String>,
+    pub characters: Vec<RosterCharacter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterCharacter {
+    pub name: String,
+    pub class: Option<String>,
+    pub level: u32,
+    /// When the roster sweep last saw this character, from addon uploads (not a live presence check).
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewsItem {
+    pub id: String,
+    pub at: DateTime<Utc>,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

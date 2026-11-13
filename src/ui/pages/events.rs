@@ -8,10 +8,14 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, div,
 };
 
-use crate::state::{ReminderScope, Snapshot, UpcomingEvent};
+use chrono::Utc;
+
+use crate::state::{Drive, DriveRecruitRow, ReminderScope, SiteEvent, Snapshot, UpcomingEvent};
 use crate::ui::format::{ago, clock, event_kind_label, until, weekday};
 use crate::ui::theme::palette;
-use crate::ui::widgets::{Tone, chamber_with, empty_state, quest_log_row, state_tag};
+use crate::ui::widgets::{
+    Tone, chamber_with, empty_state, freshness_line, quest_log_row, state_tag, sub_heading,
+};
 
 pub fn render(
     snapshot: &Snapshot,
@@ -23,8 +27,219 @@ pub fn render(
         .flex_col()
         .gap_4()
         .p_4()
+        .child(site_events_chamber(snapshot))
+        .when_some(snapshot.guild.drive.clone(), |d, drive| d.child(drive_chamber(&drive)))
         .child(events_chamber(snapshot))
         .child(reminder_summary_chamber(snapshot, open_reminder_settings))
+}
+
+fn site_events_chamber(snapshot: &Snapshot) -> Div {
+    let body = if snapshot.guild.site_events.is_empty() {
+        empty_state("No site events yet.").into_any_element()
+    } else {
+        let mut list = div().flex().flex_col().gap_2();
+        for event in &snapshot.guild.site_events {
+            list = list.child(site_event_row(event));
+        }
+        list.into_any_element()
+    };
+    let freshness = match snapshot.guild.fetched_at {
+        Some(at) => freshness_line(format!("Updated {}", ago(at))),
+        None => freshness_line("Not fetched yet"),
+    };
+    chamber_with(
+        "Site Events",
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().flex().items_center().justify_end().child(freshness))
+            .child(body),
+    )
+}
+
+fn site_event_row(event: &SiteEvent) -> Div {
+    if event.kind == "recruitment" {
+        return recruitment_drive_row(event);
+    }
+    let (label, tone) = match event.my_answer.as_deref() {
+        Some("signed") => ("Going", Tone::Good),
+        Some("tentative") => ("Maybe", Tone::Warn),
+        Some("absent") => ("Can't go", Tone::Bad),
+        _ => ("No answer", Tone::Neutral),
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .py_2()
+        .px_3()
+        .bg(palette::night3())
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().text_color(palette::ink()).child(event.title.clone()))
+                .child(div().text_xs().text_color(palette::mist2()).child(format!(
+                    "{} \u{b7} {}",
+                    event_kind_label(&event.kind),
+                    until(event.starts_at)
+                ))),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(palette::mist2())
+                        .child(format!("{} going, {} maybe", event.going, event.maybe)),
+                )
+                .child(state_tag(label, tone)),
+        )
+}
+
+/// A recruitment drive takes no sign-ups, so its row never shows going/maybe counts or an answer tag, just
+/// when it starts, or when it ends (or ended).
+fn recruitment_drive_row(event: &SiteEvent) -> Div {
+    let now = Utc::now();
+    let meta = if event.starts_at > now {
+        format!("Recruitment drive \u{b7} starts {}", until(event.starts_at))
+    } else {
+        match event.ends_at {
+            Some(ends_at) if ends_at > now => {
+                format!("Recruitment drive \u{b7} ends {}", until(ends_at))
+            }
+            Some(_) => "Recruitment drive \u{b7} ended".to_owned(),
+            None => "Recruitment drive".to_owned(),
+        }
+    };
+    div().flex().items_center().justify_between().py_2().px_3().bg(palette::night3()).child(
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().text_sm().text_color(palette::ink()).child(event.title.clone()))
+            .child(div().text_xs().text_color(palette::mist2()).child(meta)),
+    )
+}
+
+fn drive_chamber(drive: &Drive) -> Div {
+    let max_qualified = drive.leaders.iter().map(|leader| leader.qualified).max().unwrap_or(0);
+    let leaders_body = if drive.leaders.is_empty() {
+        empty_state("No recruits yet.").into_any_element()
+    } else {
+        let mut list = div().flex().flex_col().gap_2();
+        for leader in &drive.leaders {
+            let leading = max_qualified > 0 && leader.qualified == max_qualified;
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .py_2()
+                    .px_3()
+                    .bg(palette::night3())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(palette::ink())
+                                    .child(leader.inviter.clone()),
+                            )
+                            .when(leading, |d| d.child(state_tag("Leading", Tone::Good))),
+                    )
+                    .child(div().text_xs().text_color(palette::mist2()).child(format!(
+                        "{} qualified \u{b7} {} potential \u{b7} {} invited",
+                        leader.qualified, leader.potential, leader.invited
+                    ))),
+            );
+        }
+        list.into_any_element()
+    };
+    let your_recruits = if drive.your_recruits.is_empty() {
+        empty_state("You haven't invited any recruits yet.").into_any_element()
+    } else {
+        let mut list = div().flex().flex_col().gap_2();
+        for recruit in &drive.your_recruits {
+            list = list.child(recruit_row(recruit));
+        }
+        list.into_any_element()
+    };
+    chamber_with(
+        drive.title.clone(),
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(sub_heading("Leaderboard"))
+            .child(leaders_body)
+            .child(sub_heading("Your Recruits"))
+            .child(your_recruits),
+    )
+}
+
+fn recruit_row(recruit: &DriveRecruitRow) -> Div {
+    let (label, tone) = recruit_status_tag(recruit);
+    let mut entry = div().flex().flex_col().gap_1().child(
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .py_1()
+            .px_3()
+            .child(div().text_xs().text_color(palette::mist()).child(recruit.recruit.clone()))
+            .child(state_tag(label, tone)),
+    );
+    if recruit.status == "disqualified"
+        && let Some(reason) = recruit.reason.as_deref()
+    {
+        entry = entry.child(
+            div()
+                .pl_3()
+                .text_xs()
+                .text_color(palette::mist2())
+                .child(disqualify_reason_text(reason)),
+        );
+    }
+    entry
+}
+
+/// The tag label and tone for one of the signed-in member's recruits. `counting`/`joined` (still inside the
+/// 7-day qualification clock) show as "Potential", with days left when `qualifies_at` is known; the raw
+/// status word is never shown.
+fn recruit_status_tag(recruit: &DriveRecruitRow) -> (String, Tone) {
+    match recruit.status.as_str() {
+        "qualified" => ("Qualified".to_owned(), Tone::Good),
+        "disqualified" => ("Doesn't count".to_owned(), Tone::Bad),
+        "invited" => ("Invited".to_owned(), Tone::Neutral),
+        _ => match recruit.qualifies_at {
+            Some(qualifies_at) => {
+                let days = (qualifies_at - Utc::now()).num_days().max(0);
+                (format!("Potential \u{b7} {days}d left"), Tone::Warn)
+            }
+            None => ("Potential".to_owned(), Tone::Warn),
+        },
+    }
+}
+
+/// Why a `disqualified` recruit doesn't count, matching the site and Discord's wording.
+fn disqualify_reason_text(reason: &str) -> &'static str {
+    match reason {
+        "returning" => "Was in the guild before",
+        "own_alt" => "Inviter's own alt",
+        "left" => "Left during the week",
+        "low_level" => "Below level 10",
+        "never_joined" => "Never joined",
+        _ => "Doesn't count",
+    }
 }
 
 fn events_chamber(snapshot: &Snapshot) -> Div {

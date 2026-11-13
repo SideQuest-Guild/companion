@@ -55,6 +55,15 @@ To sign out, use **Sign out** in **Settings**, or revoke the companion on your
 
 Every member gets:
 
+- **Auto-sync:** whenever the addon writes a new `SQX1:` export to `SideQuest.lua` (on logout or `/reload`), the
+  companion uploads it within a few seconds and shows the result in its **History** tab. An officer's export carries
+  the full raid night (sessions, encounters, loot, awards and more); a member's export carries only their own
+  character directory entry and their own event sign-ups, so your sign-up reaches the site even when no officer is
+  online.
+- **Live guild data:** the **Standings** tab shows your EP/GP/PR and rank plus the top 10; **Events** shows the
+  site's scheduled events with who's going and your own answer, and a running recruitment drive's leaderboard and
+  your own recruits; **Guild** shows the roster (who's online, their level and class) and the latest guild news.
+  The companion refreshes this when it starts, right after every sync, and every couple of minutes while it runs.
 - **Addon updates:** the companion checks the addon's GitHub releases every hour, and every 15 minutes while WoW is
   running, against the version installed in your `AddOns` folder and installs a new one on its own, the same zip
   CurseForge serves, checked against the release's `SHA256SUMS.txt` first. Switch off **Install updates
@@ -74,14 +83,13 @@ Every member gets:
 
 Officers also get:
 
-- **Auto-sync:** whenever the addon writes a new `SQX1:` export to `SideQuest.lua` (on logout or `/reload`), the
-  companion uploads it within a few seconds and shows the result (new sessions, encounters, loot, awards) in its
-  **History** tab.
 - **Import staging:** after an upload, and every 5 minutes while WoW is running, the companion asks the site for
   the matching `SQI1:` game import and keeps it ready in a small addon folder it manages, `SideQuest_Inbox`, next
-  to the SideQuest addon. Typing `/reload` in game always loads the newest one, whether or not WoW was ever
-  closed. The first time this ships, WoW needs one full restart so it notices the new `SideQuest_Inbox` folder;
-  after that, `/reload` is all it takes. Nobody has to copy and paste an import string by hand.
+  to the SideQuest addon. `SideQuest_Inbox` lists SideQuest as a dependency, so WoW shows it nested under
+  SideQuest in the AddOns list and only loads it when SideQuest itself is enabled. Typing `/reload` in game
+  always loads the newest one, whether or not WoW was ever closed. The first time this ships, WoW needs one full
+  restart so it notices the new `SideQuest_Inbox` folder; after that, `/reload` is all it takes. Nobody has to
+  copy and paste an import string by hand.
 
 ## Settings and logs
 
@@ -132,7 +140,7 @@ installed (not just the Command Line Tools), since GPUI compiles Metal shaders a
 same script (`packaging/macos/bundle.sh`) the release workflow uses, so you can test the bundle without waiting on CI.
 
 Screenshots for this README live in `docs/screenshots/`: `gate.jpg`, `sign-in.jpg`, `overview.jpg`,
-`overview-member.jpg`, `history.jpg`, `addon.jpg`, `events.jpg`, `settings.jpg`.
+`overview-member.jpg`, `standings.jpg`, `history.jpg`, `addon.jpg`, `events.jpg`, `guild.jpg`, `settings.jpg`.
 
 ### Releasing
 

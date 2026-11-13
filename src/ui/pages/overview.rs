@@ -20,37 +20,21 @@ use crate::ui::widgets::{
 };
 
 pub fn render(snapshot: &Snapshot, engine: &EngineHandle) -> impl IntoElement {
-    let is_officer =
-        matches!(&snapshot.account, crate::state::AccountState::SignedIn(m) if m.is_officer);
-
-    if is_officer {
-        div()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .p_4()
-            .child(sync_status_chamber(snapshot, engine))
-            .child(accounts_chamber(snapshot))
-            .child(
-                div()
-                    .flex()
-                    .items_stretch()
-                    .gap_4()
-                    .child(div().flex_1().child(addon_chamber(snapshot, engine).h_full()))
-                    .child(div().flex_1().child(next_event_chamber(snapshot).h_full())),
-            )
-    } else {
-        // Members never see sync controls or upload history: lead with their next event and
-        // addon, side by side so two short chambers don't leave empty space below them.
-        div().flex().flex_col().gap_4().p_4().child(
+    div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .p_4()
+        .child(sync_status_chamber(snapshot, engine))
+        .child(accounts_chamber(snapshot))
+        .child(
             div()
                 .flex()
                 .items_stretch()
                 .gap_4()
-                .child(div().flex_1().child(next_event_chamber(snapshot).h_full()))
-                .child(div().flex_1().child(addon_chamber(snapshot, engine).h_full())),
+                .child(div().flex_1().child(addon_chamber(snapshot, engine).h_full()))
+                .child(div().flex_1().child(next_event_chamber(snapshot).h_full())),
         )
-    }
 }
 
 fn sync_status_chamber(snapshot: &Snapshot, engine: &EngineHandle) -> Div {

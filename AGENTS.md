@@ -61,10 +61,11 @@ them needs to agree before it lands.
   `com.sidequest-guild.companion`); the `secrets.json` fallback file is 0600 and still never logged.
 - The `SideQuest_Inbox` addon folder the companion writes (`SideQuest_Inbox.toc` and `Inbox.lua`, under each
   flavor's `Interface/AddOns`) is a contract with the addon: exact `.toc` fields (its `## Interface:` line copied
-  from the `SideQuest` addon's own `.toc`), exact `Inbox.lua` table shape, atomic write, never an import older
-  than the `generated_at` already in `Inbox.lua`. It's written whether or not WoW is running -- WoW only reads
-  addon files at login and `/reload`, never writes them, so there's nothing to defer. Changing its format needs a
-  matching change on the addon side.
+  from the `SideQuest` addon's own `.toc`, and a `## Dependencies: SideQuest` line so WoW nests it under SideQuest
+  in the AddOns list and only loads it alongside SideQuest), exact `Inbox.lua` table shape, atomic write, never an
+  import older than the `generated_at` already in `Inbox.lua`. It's written whether or not WoW is running -- WoW
+  only reads addon files at login and `/reload`, never writes them, so there's nothing to defer. Changing its
+  format needs a matching change on the addon side.
 - The website deploys independently: tolerate `401`/`403`/`404` from routes it hasn't shipped yet or doesn't permit
   this account on (e.g. the game-import endpoint on an older site, or for a non-officer) instead of treating them
   as fatal errors -- never assume the site has already deployed.

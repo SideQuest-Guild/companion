@@ -14,9 +14,10 @@ use crate::api::{self, ApiError};
 use crate::engine::Repaint;
 use crate::release::{self, VersionStatus};
 use crate::state::{
-    Account, AccountState, Command, ConnectionState, EventsState, HistoryEntry, HistoryKind,
-    InstalledAddon, LoginState, Member, Notice, NoticeLevel, Outcome, ReminderScope, Settings,
-    Snapshot, SyncPhase, SyncStatus, TokenState, WowInstall,
+    Account, AccountState, Command, ConnectionState, Drive, DriveLeader, DriveRecruitRow,
+    EventsState, GuildData, HistoryEntry, HistoryKind, InstalledAddon, LoginState, Member,
+    NewsItem, Notice, NoticeLevel, Outcome, ReminderScope, RosterCharacter, RosterMember, Settings,
+    SiteEvent, Snapshot, Standings, StandingsRow, SyncPhase, SyncStatus, TokenState, WowInstall,
 };
 use crate::ui::format::ago;
 use crate::{addon_install, config, history, notifications, reminders, secrets, self_update, wow};
@@ -34,6 +35,9 @@ const APP_UPDATE_INTERVAL: Duration = Duration::from_secs(3600);
 const EVENTS_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMINDER_TICK: Duration = Duration::from_secs(30);
 const WOW_POLL_INTERVAL: Duration = Duration::from_secs(10);
+/// How often live guild data (standings, site events, roster, news) is refreshed with the sync token: once
+/// at startup, right after every successful upload, and on this interval while running.
+const GUILD_DATA_INTERVAL: Duration = Duration::from_secs(120);
 /// How often the game import is fetched and staged into every flavor's inbox while WoW is running.
 const STAGE_IMPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const NOTICE_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
@@ -73,6 +77,7 @@ pub async fn run(
     let mut reminder_interval = tokio::time::interval(REMINDER_TICK);
     let mut wow_poll_interval = tokio::time::interval(WOW_POLL_INTERVAL);
     let mut stage_import_interval = tokio::time::interval(STAGE_IMPORT_INTERVAL);
+    let mut guild_data_interval = tokio::time::interval(GUILD_DATA_INTERVAL);
     let mut notice_sweep_interval = tokio::time::interval(NOTICE_SWEEP_INTERVAL);
     let mut fs_debounce_until: Option<tokio::time::Instant> = None;
 
@@ -102,6 +107,7 @@ pub async fn run(
             _ = app_update_interval.tick() => { if engine.settings.check_app_updates { engine.check_app_update().await; } }
             _ = events_interval.tick() => { engine.refresh_events().await; }
             _ = reminder_interval.tick() => { engine.reminder_tick().await; }
+            _ = guild_data_interval.tick() => { engine.poll_guild_data().await; }
             _ = wow_poll_interval.tick() => { engine.poll_wow_running().await; }
             _ = stage_import_interval.tick() => {
                 if engine.wow_running { engine.stage_all_flavors().await; }
@@ -187,6 +193,7 @@ struct Engine {
     app_update: crate::state::AppUpdate,
     last_app_release: Option<release::GithubRelease>,
     events: EventsState,
+    guild: GuildData,
     reminder_scheduler: reminders::ReminderScheduler,
 
     backoff: HashMap<PathBuf, BackoffEntry>,
@@ -239,6 +246,7 @@ impl Engine {
             app_update: crate::state::AppUpdate::NotChecked,
             last_app_release: None,
             events: EventsState::default(),
+            guild: GuildData::default(),
             reminder_scheduler: reminders::ReminderScheduler::default(),
             backoff: HashMap::new(),
             watcher: None,
@@ -280,6 +288,7 @@ impl Engine {
         }
         self.stage_all_flavors().await;
         self.refresh_events().await;
+        self.poll_guild_data().await;
     }
 
     // --- Commands ----------------------------------------------------------------------------------------------
@@ -480,6 +489,7 @@ impl Engine {
     /// engine's own state honest.
     fn clear_guild_data(&mut self) {
         self.events = EventsState::default();
+        self.guild = GuildData::default();
         self.site_calendar_url = None;
     }
 
@@ -784,13 +794,6 @@ impl Engine {
             self.needs_setup("Sign in to start syncing.", force);
             return;
         }
-        if !self.is_officer() {
-            self.needs_setup(
-                "Sync is for officers; you'll still get addon updates and reminders.",
-                force,
-            );
-            return;
-        }
         if (self.paused || !self.settings.auto_sync) && !force {
             self.set_phase(SyncPhase::Paused);
             self.publish();
@@ -956,17 +959,31 @@ impl Engine {
                     &summary,
                     None,
                 );
+                // `scope` is additive (an older site never sends it, meaning "officer"); a member upload only
+                // applies their own directory entry and signups, so say that plainly rather than the officer
+                // wording, which talks about raid-night sections a member's export never carries.
+                let (notify_body, notice_text) = if result.scope.as_deref() == Some("member") {
+                    let text = if summary == "No changes" {
+                        "Synced your characters.".to_owned()
+                    } else {
+                        format!("Synced your characters: {summary}")
+                    };
+                    (text.clone(), text)
+                } else {
+                    (
+                        format!("{account_name}: {summary}"),
+                        format!("Synced {account_name}: {summary}"),
+                    )
+                };
                 if self.settings.notify_on_sync {
-                    notifications::notify(
-                        "SideQuest Companion",
-                        &format!("{account_name}: {summary}"),
-                    );
+                    notifications::notify("SideQuest Companion", &notify_body);
                 }
-                self.push_notice(NoticeLevel::Success, format!("Synced {account_name}: {summary}"));
+                self.push_notice(NoticeLevel::Success, notice_text);
                 self.set_phase(SyncPhase::Watching);
                 self.sync.last_success = Some(Utc::now());
 
                 self.maybe_stage_import(flavor_path, token).await;
+                self.poll_guild_data().await;
             }
             Err(err) => self.handle_upload_error(saved_variables, account_name, err).await,
         }
@@ -978,6 +995,22 @@ impl Engine {
         account_name: &str,
         err: ApiError,
     ) {
+        // An older site rejects a non-officer's upload with 403 because it hasn't lifted the officer gate
+        // yet; that's not a credential problem the member can fix, so stay quiet instead of alarming them.
+        if !self.is_officer() && matches!(err, ApiError::Forbidden(_)) {
+            self.backoff.remove(saved_variables);
+            self.set_phase(SyncPhase::NeedsSetup(
+                "Member uploads aren't on the site yet.".to_owned(),
+            ));
+            self.push_history(
+                HistoryKind::Upload,
+                Outcome::Skipped,
+                account_name,
+                "Member uploads aren't on the site yet.",
+                None,
+            );
+            return;
+        }
         let message = err.to_string();
         let mut recheck_account = false;
         match err {
@@ -1298,6 +1331,129 @@ impl Engine {
         self.publish();
     }
 
+    // --- Live guild data ------------------------------------------------------------------------------------
+
+    /// Refreshes [`GuildData`] with the sync token: standings, site events, a running recruitment drive,
+    /// roster and news. Runs once at startup, right after every successful upload, and every
+    /// [`GUILD_DATA_INTERVAL`] while running. 401/403/404 from an older or non-member site are tolerated
+    /// quietly, section by section: that section is simply left empty, with no notice raised.
+    async fn poll_guild_data(&mut self) {
+        let display_name = match &self.account {
+            AccountState::SignedIn(member) => member.display_name.clone(),
+            _ => return,
+        };
+        let Some(token) = self.token.clone() else { return };
+        let site = self.settings.site_url.clone();
+
+        let standings = self.fetch_standings(&site, &token, &display_name).await;
+        let (site_events, drive) = self.fetch_events_and_drive(&site, &token, &display_name).await;
+        let roster = self.fetch_roster(&site, &token).await;
+        let news = self.fetch_news(&site, &token).await;
+
+        self.guild =
+            GuildData { standings, site_events, drive, roster, news, fetched_at: Some(Utc::now()) };
+        self.publish();
+    }
+
+    async fn fetch_standings(&self, site: &str, token: &str, you: &str) -> Option<Standings> {
+        match api::standings(&self.client, site, token).await {
+            Ok(resp) => Some(build_standings(resp, you)),
+            Err(err) => {
+                tracing::debug!("standings not available: {err:#}");
+                None
+            }
+        }
+    }
+
+    async fn fetch_events_and_drive(
+        &self,
+        site: &str,
+        token: &str,
+        you: &str,
+    ) -> (Vec<SiteEvent>, Option<Drive>) {
+        let list = match api::events(&self.client, site, token).await {
+            Ok(list) => list,
+            Err(err) => {
+                tracing::debug!("events not available: {err:#}");
+                return (Vec::new(), None);
+            }
+        };
+        let now = Utc::now();
+        let running_drive = list.iter().find(|event| {
+            event.kind == "recruitment"
+                && event.status == "scheduled"
+                && event.starts_at <= now
+                && event.ends_at.is_none_or(|ends_at| now <= ends_at)
+        });
+        let drive = match running_drive {
+            Some(event) => match api::recruitment_drive(&self.client, site, token, &event.id).await
+            {
+                Ok(dto) => Some(build_drive(dto, you)),
+                Err(err) => {
+                    tracing::debug!("recruitment drive not available: {err:#}");
+                    None
+                }
+            },
+            None => None,
+        };
+        let site_events = list
+            .into_iter()
+            .map(|event| SiteEvent {
+                id: event.id,
+                kind: event.kind,
+                title: event.title,
+                starts_at: event.starts_at,
+                ends_at: event.ends_at,
+                status: event.status,
+                going: event.counts.as_ref().map(|c| c.signed).unwrap_or(0),
+                maybe: event.counts.as_ref().map(|c| c.tentative).unwrap_or(0),
+                my_answer: event.my_signup.map(|m| m.status),
+            })
+            .collect();
+        (site_events, drive)
+    }
+
+    async fn fetch_roster(&self, site: &str, token: &str) -> Vec<RosterMember> {
+        match api::guild_roster(&self.client, site, token).await {
+            Ok(resp) => resp
+                .members
+                .into_iter()
+                .map(|member| RosterMember {
+                    name: member.name,
+                    rank: member.rank,
+                    characters: member
+                        .characters
+                        .into_iter()
+                        .map(|character| RosterCharacter {
+                            name: character.name,
+                            class: character.wow_class,
+                            level: character.level,
+                            last_seen_at: character.last_seen_at,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            Err(err) => {
+                tracing::debug!("guild roster not available: {err:#}");
+                Vec::new()
+            }
+        }
+    }
+
+    async fn fetch_news(&self, site: &str, token: &str) -> Vec<NewsItem> {
+        match api::guild_news(&self.client, site, token).await {
+            Ok(resp) => resp
+                .items
+                .into_iter()
+                .map(|item| NewsItem { id: item.id, at: item.at, text: item.text })
+                .collect(),
+            Err(err) => {
+                tracing::debug!("guild news not available: {err:#}");
+                Vec::new()
+            }
+        }
+    }
+
     // --- Notices, history, publishing ----------------------------------------------------------------------------
 
     fn push_notice(&mut self, level: NoticeLevel, text: String) {
@@ -1362,6 +1518,7 @@ impl Engine {
             addon_releases: self.last_addon_releases.iter().map(|r| r.to_state()).collect(),
             app_update: self.app_update.clone(),
             events: self.events.clone(),
+            guild: self.guild.clone(),
             wow_running: self.wow_running,
             notices: self.notices.clone(),
             app_version: self.app_version.clone(),
@@ -1425,6 +1582,55 @@ fn enrich_account(account: &mut Account, sync_state: &config::SyncState) {
             account.export_uploaded = false;
         }
     }
+}
+
+/// Builds [`Standings`] from [`api::StandingsResponse`]: the top 10 rows by PR, and the signed-in member's own
+/// row and rank (matched by display name), when they're on the list.
+fn build_standings(resp: api::StandingsResponse, you: &str) -> Standings {
+    let mut rows: Vec<StandingsRow> = resp
+        .rows
+        .into_iter()
+        .map(|row| StandingsRow {
+            name: row.name,
+            class: row.wow_class,
+            ep: row.ep,
+            gp: row.gp,
+            pr: row.pr,
+            trial: row.trial,
+        })
+        .collect();
+    rows.sort_by(|a, b| b.pr.partial_cmp(&a.pr).unwrap_or(std::cmp::Ordering::Equal));
+    let your_rank = rows.iter().position(|row| row.name == you).map(|ix| ix + 1);
+    let you_row = your_rank.map(|rank| rows[rank - 1].clone());
+    let top = rows.into_iter().take(10).collect();
+    Standings { top, you: you_row, your_rank }
+}
+
+/// Builds a [`Drive`] from [`api::RecruitmentDriveDto`]: the leaderboard, and the recruits the signed-in
+/// member invited.
+fn build_drive(dto: api::RecruitmentDriveDto, you: &str) -> Drive {
+    let leaders = dto
+        .leaders
+        .into_iter()
+        .map(|leader| DriveLeader {
+            inviter: leader.inviter,
+            invited: leader.invited,
+            potential: leader.counting,
+            qualified: leader.qualified,
+        })
+        .collect();
+    let your_recruits = dto
+        .recruits
+        .into_iter()
+        .filter(|recruit| recruit.inviter == you)
+        .map(|recruit| DriveRecruitRow {
+            recruit: recruit.recruit,
+            status: recruit.status,
+            qualifies_at: recruit.qualifies_at,
+            reason: recruit.reason,
+        })
+        .collect();
+    Drive { event_id: dto.event_id, title: dto.title, leaders, your_recruits }
 }
 
 fn sha256_hex(payload: &str) -> String {
@@ -1750,16 +1956,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_now_explains_why_it_cannot_sync() {
-        let mut engine = test_engine("http://127.0.0.1:9".to_owned(), Vec::new());
+    async fn member_upload_is_no_longer_refused() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/epgp/imports"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "recorder": "Member",
+                "sessions": {"new": 0, "updated": 0},
+                "encounters": {"new": 0, "updated": 0},
+                "loot": {"new": 0, "updated": 0, "voided": 0},
+                "awards": {"new": 0, "updated": 0, "voided": 0},
+                "unlinked_characters": [],
+                "signups": {"applied": 1},
+                "scope": "member"
+            })))
+            .mount(&server)
+            .await;
+
+        let root = tempfile::tempdir().unwrap();
+        write_account(
+            root.path(),
+            "_forever_",
+            "ACC",
+            "SideQuestDB = {\n    [\"lastExport\"] = \"SQX1:abc\",\n}\n",
+        );
+        let mut engine = test_engine(server.uri(), vec![root.path().to_path_buf()]);
         engine.account = AccountState::SignedIn(crate::state::Member {
             display_name: "Member".to_owned(),
             avatar_url: None,
             is_officer: false,
         });
+
         engine.rescan_and_sync(true).await;
-        assert!(matches!(engine.notices.as_slice(), [n] if n.level == NoticeLevel::Warning
-            && n.text.starts_with("Couldn't sync.")));
+
+        assert!(
+            !matches!(&engine.sync.phase, SyncPhase::NeedsSetup(reason) if reason.contains("officer")),
+            "a member must not be told sync is for officers: {:?}",
+            engine.sync.phase
+        );
+        assert!(
+            engine
+                .history
+                .iter()
+                .any(|h| h.kind == HistoryKind::Upload && h.outcome == Outcome::Success),
+            "a member's upload must succeed: {:?}",
+            engine.history
+        );
+        assert!(
+            engine.notices.iter().any(|n| n.text.contains("Synced your characters")),
+            "a member's success message should use member wording: {:?}",
+            engine.notices
+        );
     }
 
     #[test]
@@ -1975,5 +2225,93 @@ mod tests {
         engine.auto_install_outdated_addons().await;
         let toc_text = std::fs::read_to_string(addon_dir.join("SideQuest.toc")).unwrap();
         assert!(toc_text.contains("0.2.0"), "unpinning lets auto-update resume");
+    }
+
+    #[tokio::test]
+    async fn guild_data_poll_lands_in_snapshot() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/epgp/standings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rows": [
+                    {"name": "Officer", "class": "warrior", "characters": [], "ep": 10.0,
+                        "gp": 5.0, "pr": 2.0, "trial": false}
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/events/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/guild/roster"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"members": []})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/guild/news"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"items": []})),
+            )
+            .mount(&server)
+            .await;
+
+        let mut engine = test_engine(server.uri(), Vec::new());
+        engine.poll_guild_data().await;
+
+        let standings = engine.guild.standings.clone().expect("standings must be populated");
+        assert_eq!(standings.top.len(), 1);
+        assert_eq!(standings.top[0].name, "Officer");
+        assert_eq!(standings.your_rank, Some(1), "the signed-in display name matches the one row");
+        assert!(engine.guild.fetched_at.is_some());
+
+        // The same data reaches the UI's Snapshot, not only the engine's own field.
+        let snapshot = match engine.state.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        assert!(snapshot.guild.standings.is_some(), "poll results must land in Snapshot");
+        assert_eq!(snapshot.guild.standings.unwrap().top.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn guild_data_poll_tolerates_404_from_an_older_site_without_a_notice() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for route in ["/api/epgp/standings", "/api/events/", "/api/guild/roster", "/api/guild/news"]
+        {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&server)
+                .await;
+        }
+
+        let mut engine = test_engine(server.uri(), Vec::new());
+        engine.poll_guild_data().await;
+
+        assert!(engine.guild.standings.is_none());
+        assert!(engine.guild.site_events.is_empty());
+        assert!(engine.guild.drive.is_none());
+        assert!(engine.guild.roster.is_empty());
+        assert!(engine.guild.news.is_empty());
+        assert!(
+            engine.guild.fetched_at.is_some(),
+            "a tolerated 404 still counts as a completed poll"
+        );
+        assert!(
+            engine.notices.is_empty(),
+            "a 404 from an older site must not raise a notice: {:?}",
+            engine.notices
+        );
     }
 }

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::state::*;
 
@@ -13,7 +13,8 @@ use crate::state::*;
 pub enum DemoMode {
     /// `--demo`: a signed-in officer.
     Officer,
-    /// `--demo-member`: a signed-in member (no sync chamber, no upload history).
+    /// `--demo-member`: a signed-in member (no sync token message differs; otherwise the same pages as an
+    /// officer, since every signed-in member now syncs and sees sync status).
     Member,
     /// `--demo-gate`: signed out, the gate's default state.
     Gate,
@@ -230,6 +231,8 @@ pub fn snapshot() -> Snapshot {
         },
     ];
 
+    let guild = guild_data(now);
+
     Snapshot {
         settings: Settings::default(),
         token: TokenState::Present { masked: "sqs_\u{2026}a1B2".into() },
@@ -252,9 +255,157 @@ pub fn snapshot() -> Snapshot {
         addon_releases,
         app_update: AppUpdate::UpToDate { checked_at: now - Duration::hours(1) },
         events,
+        guild,
         wow_running: false,
         notices: Vec::new(),
         app_version: "0.1.0-demo".into(),
+    }
+}
+
+/// Sample live guild data (standings, site events, a running recruitment drive, roster, news) so the
+/// Standings, Events and Guild pages have something to show in `--demo`.
+fn guild_data(now: DateTime<Utc>) -> GuildData {
+    let top = vec![
+        StandingsRow {
+            name: "Kaelthorne".into(),
+            class: Some("warrior".into()),
+            ep: 420.0,
+            gp: 180.0,
+            pr: 2.33,
+            trial: false,
+        },
+        StandingsRow {
+            name: "Brightwillow".into(),
+            class: Some("priest".into()),
+            ep: 310.0,
+            gp: 150.0,
+            pr: 2.07,
+            trial: false,
+        },
+        StandingsRow {
+            name: "Moonfall".into(),
+            class: Some("druid".into()),
+            ep: 290.0,
+            gp: 200.0,
+            pr: 1.45,
+            trial: true,
+        },
+    ];
+    let you = top.first().cloned();
+
+    GuildData {
+        standings: Some(Standings { top, you, your_rank: Some(1) }),
+        site_events: vec![
+            SiteEvent {
+                id: "evt-1".into(),
+                kind: "raid".into(),
+                title: "Hyjal Summit".into(),
+                starts_at: now + Duration::hours(6),
+                ends_at: Some(now + Duration::hours(9)),
+                status: "scheduled".into(),
+                going: 18,
+                maybe: 2,
+                my_answer: Some("signed".into()),
+            },
+            SiteEvent {
+                id: "evt-4".into(),
+                kind: "recruitment".into(),
+                title: "Autumn Recruitment Drive".into(),
+                starts_at: now - Duration::days(3),
+                ends_at: Some(now + Duration::days(12)),
+                status: "scheduled".into(),
+                going: 0,
+                maybe: 0,
+                my_answer: None,
+            },
+        ],
+        drive: Some(Drive {
+            event_id: "evt-4".into(),
+            title: "Autumn Recruitment Drive".into(),
+            leaders: vec![
+                DriveLeader {
+                    inviter: "Kaelthorne".into(),
+                    invited: 5,
+                    potential: 1,
+                    qualified: 3,
+                },
+                DriveLeader {
+                    inviter: "Brightwillow".into(),
+                    invited: 2,
+                    potential: 0,
+                    qualified: 2,
+                },
+            ],
+            your_recruits: vec![
+                DriveRecruitRow {
+                    recruit: "Newbie".into(),
+                    status: "qualified".into(),
+                    qualifies_at: None,
+                    reason: None,
+                },
+                DriveRecruitRow {
+                    recruit: "Freshface".into(),
+                    status: "counting".into(),
+                    qualifies_at: Some(now + Duration::days(3)),
+                    reason: None,
+                },
+                DriveRecruitRow {
+                    recruit: "Latejoiner".into(),
+                    status: "invited".into(),
+                    qualifies_at: None,
+                    reason: None,
+                },
+                DriveRecruitRow {
+                    recruit: "Dropout".into(),
+                    status: "disqualified".into(),
+                    qualifies_at: None,
+                    reason: Some("left".into()),
+                },
+            ],
+        }),
+        roster: vec![
+            RosterMember {
+                name: "Kaelthorne".into(),
+                rank: Some("Officer".into()),
+                characters: vec![
+                    RosterCharacter {
+                        name: "Kaelthorne".into(),
+                        class: Some("warrior".into()),
+                        level: 80,
+                        last_seen_at: Some(now - Duration::minutes(5)),
+                    },
+                    RosterCharacter {
+                        name: "Kaelalt".into(),
+                        class: Some("mage".into()),
+                        level: 80,
+                        last_seen_at: Some(now - Duration::days(2)),
+                    },
+                ],
+            },
+            RosterMember {
+                name: "Brightwillow".into(),
+                rank: Some("Member".into()),
+                characters: vec![RosterCharacter {
+                    name: "Brightwillow".into(),
+                    class: Some("priest".into()),
+                    level: 80,
+                    last_seen_at: None,
+                }],
+            },
+        ],
+        news: vec![
+            NewsItem {
+                id: "news-1".into(),
+                at: now - Duration::hours(2),
+                text: "The guild defeated Ragnaros.".into(),
+            },
+            NewsItem {
+                id: "news-2".into(),
+                at: now - Duration::days(1),
+                text: "Brightwillow joined the guild.".into(),
+            },
+        ],
+        fetched_at: Some(now - Duration::minutes(2)),
     }
 }
 
@@ -276,8 +427,9 @@ pub fn snapshot_login_waiting() -> Snapshot {
     }
 }
 
-/// A variant of [`snapshot`] previewing a member (not an officer): no sync chamber, no history of
-/// uploads, Overview leads with the next raid and the addon.
+/// A variant of [`snapshot`] previewing a member (not an officer). Every signed-in member now syncs and
+/// sees sync status, so this mostly differs in copy; some officer-only controls (staging, addon-release
+/// version picker) still hide for a member.
 pub fn snapshot_member() -> Snapshot {
     Snapshot {
         account: AccountState::SignedIn(Member {
