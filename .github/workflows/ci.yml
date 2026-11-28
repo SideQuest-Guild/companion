@@ -70,7 +70,7 @@ jobs:
 
       # Advisories, licenses, bans and sources only read Cargo.lock's dependency graph; they don't build the crate,
       # so the GPUI system libraries above aren't needed here.
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2.1.3
         with:
           arguments: --all-features
           # `-W` belongs to `check`, not to cargo-deny itself, so it goes after the command.
